@@ -72,9 +72,9 @@
   // ===================== 로그인 =====================
   function renderLogin() {
     if (S.keyHandler) { document.removeEventListener('keydown', S.keyHandler); S.keyHandler = null; }
-    var school = h('input', { class: 'input', id: 'lg-school', autocomplete: 'off', placeholder: '예: 청담고' });
+    var school = h('input', { class: 'input', id: 'lg-school', autocomplete: 'off', placeholder: '학교 이름' });
     var name = h('input', { class: 'input', id: 'lg-name', autocomplete: 'off', placeholder: '이름' });
-    var pin = h('input', { class: 'input pin', id: 'lg-pin', type: 'password', inputmode: 'numeric', maxlength: String(PIN_LEN), autocomplete: 'off', placeholder: '숫자' });
+    var pin = h('input', { class: 'input pin', id: 'lg-pin', type: 'password', inputmode: 'numeric', maxlength: String(PIN_LEN), autocomplete: 'off', placeholder: '숫자 비밀번호' });
     var err = h('p', { class: 'err', role: 'alert' });
     var btn = h('button', { class: 'btn primary block', type: 'submit' }, '들어가기');
     var form = h('form', { class: 'card form', onsubmit: function (e) {
