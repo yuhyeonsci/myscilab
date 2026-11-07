@@ -210,6 +210,7 @@ textarea.input { min-height: 90px; resize: vertical; line-height: 1.5; }
 .auth .logo { width: 40px; height: 40px; border-radius: 13px; font-size: 19px; }
 .auth .lead { text-align: center; color: var(--muted); font-size: 14px; }
 .pin { letter-spacing: .35em; font-size: 20px; text-align: center; }
+.pin::placeholder { letter-spacing: normal; font-size: 15px; }
 
 /* ---------- 숙제 풀이 ---------- */
 .q { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 16px; }
