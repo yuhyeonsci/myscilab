@@ -506,7 +506,7 @@
     live(inner, [['student.units', {}]], function (r) {
       var d = r[0];
       if (!d.list.length) {
-        inner.appendChild(h('div', { class: 'card empty', text: d.closed ? '종강하고 1주가 지나서 영상·자료가 닫혔어요.' : d.upcoming ? '아직 열린 수업이 없어요. 날짜가 되면 여기에 열려요.' : '지금 볼 수 있는 수업 자료가 없어요.' }));
+        inner.appendChild(h('div', { class: 'card empty', text: d.closed ? '종강하고 1주가 지나서 영상·자료가 닫혔어요.' : d.upcoming ? '아직 열린 수업이 없어요. 날짜가 되면 여기에 열려요.' : '지금 볼 수 있는 영상·자료가 없어요. 선생님이 열어 준 영상·자료가 여기에 보여요.' }));
         return;
       }
       d.list.forEach(function (u) { inner.appendChild(unitCard(u)); });

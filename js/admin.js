@@ -193,7 +193,9 @@
         return h('a', { class: 'li', href: '#/student/' + enc(s.key) },
           h('div', null, h('div', { class: 'bold' }, s.name, s.joinedAt ? h('span', { class: 'chip navy', style: 'margin-left:6px;font-size:11px', text: UI.fmtDate(s.joinedAt) + ' 입반' }) : null),
             h('div', { class: 'small muted', text: s.school + ' ' + s.grade + ' · ' + (s.pinSet ? '비밀번호 학생이 정함' : '임시 비밀번호 ' + s.pin) })),
-          h('div', { class: 'inline', style: 'gap:6px;flex-wrap:nowrap' }, chip, memoButton(s)));
+          h('div', { class: 'inline', style: 'gap:6px;flex-wrap:nowrap' },
+            s.receive && s.receive.indexOf('v') !== -1 ? h('span', { class: 'chip navy', text: '영상' }) : null,
+            s.receive && s.receive.indexOf('f') !== -1 ? h('span', { class: 'chip butter', text: '자료' }) : null, chip, memoButton(s)));
       })));
       box.appendChild(h('div', { class: 'btns grow' },
         h('button', { class: 'btn primary', type: 'button', onclick: function () { rosterSheet(c); } }, '+ 학생 등록'),
@@ -296,6 +298,17 @@
       UI.busy(resetBtn, async function () { await call('admin.resetPin', { key: st.key }); pinLine.textContent = '비밀번호: 임시 1111'; UI.toast('1111로 되돌렸어요.'); }).catch(function () { });
     });
     card.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, pinLine, resetBtn));
+    // 늘 받는 것 (고른 학생만 차시)
+    var rcv = st.receive || '';
+    function rcvBox(kind, label) {
+      return h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: rcv.indexOf(kind) !== -1, onchange: function (e) {
+        rcv = (kind === 'v' ? (e.target.checked ? 'v' : '') + (rcv.indexOf('f') !== -1 ? 'f' : '') : (rcv.indexOf('v') !== -1 ? 'v' : '') + (e.target.checked ? 'f' : ''));
+        call('admin.setReceive', { key: st.key, receive: rcv }).then(function () { UI.toast('저장했어요. 선택 공개 차시에 적용돼요.'); }, function (er) { UI.toast(er.message); });
+      } }), label);
+    }
+    card.appendChild(h('div', { class: 'sec', style: 'gap:4px' }, h('span', { class: 'lbl', text: '상시 공개 (요청한 학생)' }),
+      h('div', { class: 'inline' }, rcvBox('v', '영상'), rcvBox('f', '자료')),
+      h('p', { class: 'tiny muted', text: '켜 두면 선택 공개 차시의 영상·자료가 이 학생에게 항상 공개돼요. 결석한 날은 켜지 않아도 자동으로 공개돼요.' })));
     // 학부모 코드
     var codeEl = h('b', { style: 'letter-spacing:.1em', text: ad.parentCode.slice(0, 4) + '-' + ad.parentCode.slice(4) });
     var re = h('button', { class: 'btn small', type: 'button' }, '재발급');
@@ -378,7 +391,8 @@
 
   // ===================== 공개 대상(반·날짜) 고르기 =====================
   // kind: lecture(date,startTime) | test(date) | unit(from,to,students) | notice(from,to)
-  function targetEditor(kind, initial, defaultClassId) {
+  function targetEditor(kind, initial, defaultClassId, opts) {
+    opts = opts || {};
     var wrap = h('div', { class: 'sec', style: 'gap:8px' });
     var state = {};
     (initial || []).forEach(function (t) { state[t.classId] = JSON.parse(JSON.stringify(t)); });
@@ -422,32 +436,45 @@
       drawFields();
       return box;
     }
-    // 차시: 학생별로 보이기·숨기기 (기본은 입반일 기준)
+    // 차시: 학생마다 영상·자료를 따로 보이기·숨기기 (열 때마다 지금 규칙으로 기본값을 새로 계산)
+    var WHY = { all: '전체 공개', setting: '상시 공개 학생', absent: '그날 결석', video: '그날 영상 수강', joined: '입반 전 차시', '': '' };
     function overridePanel(c, t) {
       t.students = t.students || {};
-      var n = Object.keys(t.students).length;
       var panel = h('div', { class: 'sec hidden', style: 'gap:6px;width:100%' });
-      var btn = h('button', { class: 'btn small', type: 'button' }, '학생별 설정' + (n ? ' (예외 ' + n + '명)' : ''));
+      var btn = h('button', { class: 'btn small', type: 'button' });
+      function label() { var k = Object.keys(t.students).length; btn.textContent = '학생별 설정' + (k ? ' (예외 ' + k + '명)' : ''); }
+      label();
       btn.addEventListener('click', function () {
-        panel.classList.toggle('hidden');
-        if (panel.dataset.loaded) return;
-        panel.dataset.loaded = '1';
+        if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+        panel.classList.remove('hidden');
+        panel.innerHTML = '';
         panel.appendChild(UI.loading());
-        call('admin.classStudents', { classId: c.id }).then(function (list) {
+        var aud = opts.audience ? opts.audience() : 'all';
+        call('admin.unitAudience', { classId: c.id, from: t.from, audience: aud }).then(function (list) {
           panel.innerHTML = '';
-          panel.appendChild(h('p', { class: 'tiny muted', text: '기본: 시작 날짜보다 늦게 들어온 학생(중도 입반)은 안 보여요. 학생마다 바꿀 수 있어요.' }));
+          panel.appendChild(h('p', { class: 'tiny muted', text: aud === 'all'
+            ? '전체 공개 차시예요. 중도 입반생은 입반 전 차시가 비공개예요. 학생마다 영상·자료를 따로 바꿀 수 있어요.'
+            : '선택 공개 차시예요. 그날(시작 날짜) 결석·영상 수강으로 체크한 학생과 상시 공개 학생에게 자동으로 공개돼요. 요청한 학생은 여기서 공개해 주세요.' }));
           list.forEach(function (s) {
-            var def = !s.joinedAt || !t.from || s.joinedAt <= t.from;
             var cur = t.students[s.key];
-            var sel = h('select', { class: 'input sm', style: 'width:auto', 'aria-label': s.name + ' 공개 설정', onchange: function (e) {
-              if (e.target.value === '') delete t.students[s.key]; else t.students[s.key] = e.target.value === '1';
-              var k = Object.keys(t.students).length; btn.textContent = '학생별 설정' + (k ? ' (예외 ' + k + '명)' : '');
-            } },
-              h('option', { value: '', selected: cur === undefined, text: '기본 (' + (def ? '보임' : '안 보임') + ')' }),
-              h('option', { value: '1', selected: cur === true, text: '보이기' }),
-              h('option', { value: '0', selected: cur === false, text: '숨기기' }));
-            panel.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' },
-              h('span', { class: 'small' }, s.name, s.joinedAt ? h('span', { class: 'muted', text: ' · ' + UI.fmtDate(s.joinedAt) + ' 입반' }) : null), sel));
+            if (typeof cur === 'boolean') cur = { v: cur, f: cur };
+            cur = cur || {};
+            function sel(kind, def, name) {
+              var v = cur[kind];
+              return h('select', { class: 'input sm', style: 'width:auto', 'aria-label': s.name + ' ' + name, onchange: function (e) {
+                var o = t.students[s.key];
+                o = typeof o === 'boolean' ? { v: o, f: o } : (o || {});
+                if (e.target.value === '') delete o[kind]; else o[kind] = e.target.value === '1';
+                if (o.v === undefined && o.f === undefined) delete t.students[s.key]; else t.students[s.key] = o;
+                label();
+              } },
+                h('option', { value: '', selected: v === undefined, text: name + ' 기본(' + (def ? '공개' : '비공개') + ')' }),
+                h('option', { value: '1', selected: v === true, text: name + ' 공개' }),
+                h('option', { value: '0', selected: v === false, text: name + ' 비공개' }));
+            }
+            panel.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between;border-bottom:1px solid var(--line2);padding-bottom:6px' },
+              h('span', { class: 'small' }, h('b', { text: s.name }), s.why ? h('span', { class: 'muted', text: ' · ' + WHY[s.why] }) : null),
+              h('div', { class: 'inline', style: 'gap:6px' }, sel('v', s.defV, '영상'), sel('f', s.defF, '자료'))));
           });
           if (!list.length) panel.appendChild(h('p', { class: 'small muted', text: '학생이 없어요.' }));
         }, function (e) { panel.innerHTML = ''; panel.appendChild(h('p', { class: 'err', text: e.message })); });
@@ -631,7 +658,7 @@
       });
       root.appendChild(h('h1', { text: isNew ? '새 숙제' : '숙제 수정' }));
       root.appendChild(h('section', { class: 'card form' }, field('제목', title), field('안내', memo)));
-      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '어느 반에, 언제' }),
+      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '대상 반 · 날짜' }),
         h('p', { class: 'tiny muted', text: '날짜가 되면 학생에게 열리고, 같은 반의 다음 숙제 수업 시작 시각이 마감이에요.' }), targets.el));
       root.appendChild(h('section', { class: 'sec', style: 'gap:10px' }, h('div', { class: 'sec-h', text: '문항' }),
         h('div', { class: 'card sec', style: 'gap:10px' },
@@ -780,7 +807,7 @@
       });
       root.appendChild(h('h1', { text: isNew ? '새 테스트' : T.title }));
       root.appendChild(h('section', { class: 'card form' }, field('제목', title)));
-      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '어느 반에, 언제' }), targets.el));
+      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '대상 반 · 날짜' }), targets.el));
       root.appendChild(h('section', { class: 'sec', style: 'gap:10px' }, h('div', { class: 'sec-h', text: '문항' }),
         h('div', { class: 'card inline' }, h('span', { class: 'small' }, '문항 수'), countIn, applyBtn,
           h('span', { class: 'tiny muted', text: '정답을 넣은 문항은 학생 답 번호만 입력하면 자동으로 O/X가 매겨져요.' })), qbox));
@@ -802,8 +829,9 @@
         return h('a', { class: 'row', href: '#/unit/' + enc(u.id) + '/' + enc(c.id) },
           h('div', null, h('div', { class: 't', text: u.title }),
             h('div', { class: 's', text: range(u.from, u.to) + ' · 영상 ' + u.videos + ' · 파일 ' + u.files + (u.overrides ? ' · 학생별 예외 ' + u.overrides + '명' : '') + (u.sharedWith.length ? ' · 같이: ' + u.sharedWith.join(', ') : '') })),
-          h('div', { class: 'chips', style: 'justify-content:flex-end' }, stateChip(u.state), u.files ? h('span', { class: 'chip', text: '받음 ' + u.got + '/' + u.allowed }) : null,
-            u.videos ? h('span', { class: 'chip', text: '시청 ' + (u.viewed || 0) + '/' + u.allowed }) : null));
+          h('div', { class: 'chips', style: 'justify-content:flex-end' }, stateChip(u.state), u.audience === 'all' ? h('span', { class: 'chip lav', text: '전체 공개' }) : h('span', { class: 'chip', text: '선택 공개' }),
+            u.files ? h('span', { class: 'chip', text: '자료 ' + u.got + '/' + (u.allowedF == null ? u.allowed : u.allowedF) + '명' }) : null,
+            u.videos ? h('span', { class: 'chip', text: '영상 ' + (u.viewed || 0) + '/' + (u.allowedV == null ? u.allowed : u.allowedV) + '명' }) : null));
       })));
     });
   }
@@ -818,7 +846,13 @@
       var files = U.files.map(function (f) { return { id: f.id, fileId: f.fileId, fileName: f.fileName, size: f.size, stamp: f.stamp }; });
       var title = h('input', { class: 'input', value: U.title, placeholder: '예: 3차시 · 전자기 유도' });
       var memo = h('textarea', { class: 'input', text: U.memo, placeholder: '학생에게 보일 설명 (선택)', style: 'min-height:56px' });
-      var targets = targetEditor('unit', U.targets, classId);
+      var audience = isNew ? 'pick' : (U.audience || 'all');
+      var targets = targetEditor('unit', U.targets, classId, { audience: function () { return audience; } });
+      var audBox = h('div', { class: 'sec', style: 'gap:6px' }, [['pick', '선택 공개', '기본은 비공개예요. 그날 결석·영상 수강으로 체크한 학생은 영상+자료가 자동 공개되고, 상시 공개 학생과 학생별 설정에서 공개한 학생에게만 보여요.'],
+        ['all', '전체 공개', '반 학생 모두에게 영상과 자료를 공개해요.']].map(function (o) {
+        return h('label', { class: 'check', style: 'align-items:flex-start' }, h('input', { type: 'radio', name: 'aud', value: o[0], checked: audience === o[0], onchange: function () { audience = o[0]; } }),
+          h('span', null, h('b', { text: o[1] }), h('span', { class: 'tiny muted', style: 'display:block', text: o[2] })));
+      }));
       var vbox = h('div', { class: 'sec', style: 'gap:8px' }), fbox = h('div', { class: 'sec', style: 'gap:8px' });
       function drawV() {
         vbox.innerHTML = '';
@@ -863,7 +897,7 @@
       var save = h('button', { class: 'btn primary', type: 'button' }, '저장');
       save.addEventListener('click', function () {
         UI.busy(save, async function () {
-          var r = await call('admin.saveUnit', { id: isNew ? '' : id, title: title.value, memo: memo.value, videos: videos, files: files, targets: targets.get() });
+          var r = await call('admin.saveUnit', { id: isNew ? '' : id, title: title.value, memo: memo.value, videos: videos, files: files, targets: targets.get(), audience: audience });
           UI.toast('저장했어요.');
           location.hash = '#/class/' + enc(classId) + '/units';
         }).catch(function () { });
@@ -879,7 +913,9 @@
       root.appendChild(h('section', { class: 'card form' }, field('제목', title), field('설명', memo)));
       root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '영상' }), vbox));
       root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '수업 자료 파일' }), fbox));
-      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '어느 반에, 언제부터' }), targets.el));
+      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '공개 대상' }), audBox));
+      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '공개 반 · 날짜' }),
+        h('p', { class: 'tiny muted', text: '시작 날짜를 그 수업 날짜로 맞춰 주세요. 그날 출석부에서 결석·영상으로 체크한 학생에게 자동으로 열려요.' }), targets.el));
       root.appendChild(h('div', { class: 'submitbar' }, del || h('span'), save));
       box.innerHTML = ''; box.appendChild(root);
       drawV(); drawF();
@@ -895,9 +931,9 @@
       box.appendChild(h('h1', { text: d.title + ' 받은 기록' }));
       if (!d.files.length && !d.videos.length) { box.appendChild(h('div', { class: 'card empty', text: '이 차시에는 영상·파일이 없어요.' })); return; }
       box.appendChild(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
-        h('thead', null, h('tr', null, h('th', { class: 'sticky', text: '이름' }), h('th', { text: '볼 수 있음' }), d.videos.map(function (v) { return h('th', { text: '▶ ' + v.label }); }), d.files.map(function (f) { return h('th', { text: f.fileName }); }))),
+        h('thead', null, h('tr', null, h('th', { class: 'sticky', text: '이름' }), h('th', { text: '공개' }), d.videos.map(function (v) { return h('th', { text: '▶ ' + v.label }); }), d.files.map(function (f) { return h('th', { text: f.fileName }); }))),
         h('tbody', null, d.rows.map(function (x) {
-          return h('tr', null, h('td', { class: 'sticky bold', text: x.name }), h('td', { text: x.allowed ? '예' : '아니요' }),
+          return h('tr', null, h('td', { class: 'sticky bold', text: x.name }), h('td', { text: x.canV === undefined ? (x.allowed ? '예' : '아니요') : ([x.canV ? '영상' : '', x.canF ? '자료' : ''].filter(Boolean).join('·') || '없음') }),
             x.videos.map(function (v) { return h('td', { class: 'small', text: v.count ? UI.fmtDT(v.first) + (v.count > 1 ? ' 외 ' + (v.count - 1) + '번' : '') : '–' }); }),
             x.files.map(function (f) { return h('td', { class: 'small', text: f.count ? UI.fmtDT(f.first) + (f.count > 1 ? ' 외 ' + (f.count - 1) + '번' : '') : '–' }); }));
         })))));
@@ -949,7 +985,7 @@
       root.appendChild(h('section', { class: 'card form' }, field('제목', title, '학생 홈 맨 위 띠에 이 제목이 보여요.'), field('내용', body), img,
         h('div', { class: 'inline' }, h('div', { class: 'field', style: 'flex:2 1 200px' }, h('label', { text: '링크' }), link), h('div', { class: 'field', style: 'flex:1 1 140px' }, h('label', { text: '링크 글자' }), linkLabel)),
         h('label', { class: 'check' }, pinned, '맨 위에 고정')));
-      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '어느 반에, 언제까지' }), targets.el));
+      root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '공개 반 · 기간' }), targets.el));
       root.appendChild(h('div', { class: 'submitbar' }, del || h('span'), save));
       box.innerHTML = ''; box.appendChild(root);
       drawImg();
@@ -1133,7 +1169,7 @@
     if (!a) return null;
     return h('section', { class: 'card sec', style: 'gap:8px' }, h('h3', { text: '이번 달 출석' }),
       a.total ? h('div', { class: 'chips' }, h('span', { class: 'chip mint', text: '출석 ' + a.present }), h('span', { class: 'chip butter', text: '지각 ' + a.late }),
-        h('span', { class: 'chip coral', text: '결석 ' + a.absent }), h('span', { class: 'chip lav', text: '조퇴 ' + a.early }), h('span', { class: 'chip', text: '출석률 ' + a.rate + '%' }))
+        h('span', { class: 'chip coral', text: '결석 ' + a.absent }), h('span', { class: 'chip lav', text: '조퇴 ' + a.early }), a.video ? h('span', { class: 'chip navy', text: '영상 ' + a.video }) : null, h('span', { class: 'chip', text: '출석률 ' + a.rate + '%' }))
         : h('p', { class: 'small muted', text: '이번 달 출석 기록이 없어요.' }),
       a.list.map(function (x) { return h('p', { class: 'small', text: UI.fmtDate(x.date) + ' ' + x.label + (x.note ? ' · ' + x.note : '') }); }));
   }
@@ -1145,7 +1181,7 @@
     var b = h('button', { class: 'btn primary', type: 'button' }, '복사하기');
     var sh = UI.sheet(kind === 'lecture' ? '숙제 복사' : '차시 복사', h('div', { class: 'form' },
       h('p', { class: 'small muted', text: kind === 'lecture' ? '정답·영역·해설·문제 사진이 모두 복사돼요. 제출 기록은 새로 시작해요.' : '영상·파일·설명이 모두 복사돼요.' }),
-      field('제목', t), h('div', { class: 'lbl', text: '어느 반에, 언제' }), targets.el, b));
+      field('제목', t), h('div', { class: 'lbl', text: '대상 반 · 날짜' }), targets.el, b));
     b.addEventListener('click', function () {
       UI.busy(b, async function () {
         var tg = targets.get();
@@ -1214,7 +1250,7 @@
   }
 
   // ---------- 출석부 ----------
-  var ATT = [['O', '출석', 'mint'], ['L', '지각', 'butter'], ['A', '결석', 'coral'], ['E', '조퇴', 'lav']];
+  var ATT = [['O', '출석', 'mint'], ['V', '영상', 'navy'], ['L', '지각', 'butter'], ['A', '결석', 'coral'], ['E', '조퇴', 'lav']];
   function tabAttendance(box, c) {
     S.attDate = S.attDate || {};
     var date = S.attDate[c.id] || UI.todayStr();
@@ -1222,7 +1258,7 @@
       box.innerHTML = '';
       loadInto(box, call('admin.attendance', { classId: c.id, date: date }), function (d) {
         date = d.date; S.attDate[c.id] = date;
-        var rows = d.students.map(function (s) { return { key: s.key, name: s.name, status: s.status, note: s.note, by: s.by, joinedAt: s.joinedAt }; });
+        var rows = d.students.map(function (s) { return { key: s.key, name: s.name, status: s.status, note: s.note, by: s.by, joinedAt: s.joinedAt, viewedAt: s.viewedAt }; });
         var dsel = h('select', { class: 'input sm', style: 'width:auto;flex:0 0 auto', 'aria-label': '날짜', onchange: function (e) { date = e.target.value; load(); } },
           d.dates.map(function (x) { return h('option', { value: x, selected: x === date, text: UI.fmtDate(x) + (x === UI.todayStr() ? ' 오늘' : '') }); }));
         var dpick = h('input', { class: 'input sm', type: 'date', value: date, style: 'width:auto;flex:0 0 auto', 'aria-label': '다른 날짜', onchange: function (e) { if (e.target.value) { date = e.target.value; load(); } } });
@@ -1246,7 +1282,8 @@
               } });
             }));
             var extra = [];
-            if (r.status && r.status !== 'O') extra.push(note);
+            if (r.status && r.status !== 'O' && r.status !== 'V') extra.push(note);
+            if (r.status === 'A' || r.status === 'V') extra.push(h('span', { class: 'tiny', style: 'color:var(--navy-ink)', text: '이날 차시 영상·자료가 자동 공개돼요' }));
             if (r.status === 'A' && d.units.length) {
               var us = h('select', { class: 'input sm', style: 'width:auto;max-width:200px', 'aria-label': r.name + ' 보강 차시' }, h('option', { value: '', text: '보강 영상 열기…' }),
                 d.units.map(function (u) { return h('option', { value: u.id, text: u.title }); }));
@@ -1257,7 +1294,8 @@
               extra.push(us);
             }
             list.appendChild(h('div', { class: 'li', style: 'flex-wrap:wrap' },
-              h('div', { style: 'min-width:90px' }, h('div', { class: 'bold' }, r.name, r.by === 'qr' ? h('span', { class: 'chip navy', style: 'margin-left:6px;font-size:10.5px', text: 'QR' }) : null)),
+              h('div', { style: 'min-width:90px' }, h('div', { class: 'bold' }, r.name, r.by === 'qr' ? h('span', { class: 'chip navy', style: 'margin-left:6px;font-size:10.5px', text: 'QR' }) : null),
+                r.viewedAt ? h('div', { class: 'tiny', style: 'color:var(--navy-ink)', text: '영상 봄 ' + UI.fmtDT(r.viewedAt) }) : null),
               h('div', { class: 'inline', style: 'gap:6px;justify-content:flex-end;flex:1' }, btns, memoButton(r)),
               extra.length ? h('div', { class: 'inline', style: 'width:100%;justify-content:flex-end' }, extra) : null));
           });
@@ -1293,7 +1331,7 @@
     var sh = UI.sheet(c.name + ' QR 출석', body, { wide: true, sticky: true, noFocus: true, onClose: function () { timers.forEach(clearInterval); onClose(); } });
     try {
       var info = await call('admin.startCheckin', { classId: c.id });
-      await UI.loadScript('/js/qrcode.js?v=3');
+      await UI.loadScript('/js/qrcode.js?v=6');
       var url = location.origin + '/#/checkin/' + info.code;
       var qr = window.qrcode(0, 'M');
       qr.addData(url); qr.make();

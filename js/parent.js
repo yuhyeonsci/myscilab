@@ -79,7 +79,7 @@
           tile('coral', '숙제 제출률', m.rate == null ? '–' : m.rate + '%', m.due ? m.done + ' / ' + m.due + '개 제출' : '이번 달 마감된 숙제 없음'),
           tile('mint', '숙제 평균', m.avg == null ? '–' : m.avg + '점', '전체 평균 ' + (o.avg == null ? '–' : o.avg + '점')),
           tile('navy', '진도', r.progress.lecturesOpened + ' / ' + r.progress.lecturesTotal, '숙제 기준' + (r.progress.unitsTotal ? ' · 수업 ' + r.progress.unitsOpened + '/' + r.progress.unitsTotal : '')),
-          tile('butter', '출석률', r.attendance.rate == null ? '–' : r.attendance.rate + '%', r.attendance.total ? '출석 ' + r.attendance.present + ' · 지각 ' + r.attendance.late + ' · 결석 ' + r.attendance.absent : '이번 달 출석 기록 없음'));
+          tile('butter', '출석률', r.attendance.rate == null ? '–' : r.attendance.rate + '%', r.attendance.total ? '출석 ' + r.attendance.present + (r.attendance.video ? ' · 영상 ' + r.attendance.video : '') + ' · 지각 ' + r.attendance.late + ' · 결석 ' + r.attendance.absent : '이번 달 출석 기록 없음'));
         box.appendChild(tiles);
         var colA = h('div', { class: 'col-a' }), colB = h('div', { class: 'col-b' });
         if (r.comment) colA.appendChild(h('section', { class: 'card tint lav' }, h('div', { class: 'k', text: '선생님 한마디' }), h('p', { style: 'margin-top:6px;white-space:pre-wrap', text: r.comment })));
