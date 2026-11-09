@@ -1253,14 +1253,14 @@
   var ATT = [['O', '출석', 'mint'], ['V', '영상', 'navy'], ['L', '지각', 'butter'], ['A', '결석', 'coral'], ['E', '조퇴', 'lav']];
   function tabAttendance(box, c) {
     S.attDate = S.attDate || {};
-    var date = S.attDate[c.id] || UI.todayStr();
+    var date = S.attDate[c.id] || ''; // 비우면 서버가 가장 최근 수업일을 골라 줌
     function load() {
       box.innerHTML = '';
       loadInto(box, call('admin.attendance', { classId: c.id, date: date }), function (d) {
         date = d.date; S.attDate[c.id] = date;
         var rows = d.students.map(function (s) { return { key: s.key, name: s.name, status: s.status, note: s.note, by: s.by, joinedAt: s.joinedAt, viewedAt: s.viewedAt }; });
         var dsel = h('select', { class: 'input sm', style: 'width:auto;flex:0 0 auto', 'aria-label': '날짜', onchange: function (e) { date = e.target.value; load(); } },
-          d.dates.map(function (x) { return h('option', { value: x, selected: x === date, text: UI.fmtDate(x) + (x === UI.todayStr() ? ' 오늘' : '') }); }));
+          d.dates.map(function (x) { return h('option', { value: x, selected: x === date, text: UI.fmtDate(x) + (x === UI.todayStr() ? ' 오늘' : x > UI.todayStr() ? ' 예정' : '') }); }));
         var dpick = h('input', { class: 'input sm', type: 'date', value: date, style: 'width:auto;flex:0 0 auto', 'aria-label': '다른 날짜', onchange: function (e) { if (e.target.value) { date = e.target.value; load(); } } });
         var qrBtn = h('button', { class: 'btn small', type: 'button', onclick: function () { checkinModal(c, load); } }, icon('qr', 16), 'QR 출석 띄우기');
         var summary = h('div', { class: 'chips' });
@@ -1308,7 +1308,10 @@
             UI.toast('출석과 수업 일지를 저장했어요.');
           }).catch(function () { });
         });
-        box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('div', { class: 'inline' }, dsel, dpick), qrBtn));
+        box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('div', { class: 'inline' }, d.dates.length ? dsel : null, dpick), qrBtn));
+        if (d.noClass) box.appendChild(h('div', { class: 'card tint butter small' }, '아직 정해진 수업 일자가 없어요.',
+          h('div', { class: 'tiny', style: 'margin-top:4px', text: '숙제를 만들면 그 날짜가 수업일로 잡혀요. 다른 날짜는 옆 날짜 칸에서 골라 저장하면 목록에 추가돼요.' })));
+        else if (d.beforeFirst) box.appendChild(h('div', { class: 'card tint butter small', text: '첫 수업 전이에요. 첫 수업은 ' + UI.fmtDate(d.nextClass) + '이에요.' }));
         if (d.lecture) box.appendChild(h('p', { class: 'small muted', text: '이날 숙제: ' + d.lecture.title + (d.lecture.startTime ? ' · 수업 시작 ' + d.lecture.startTime : '') }));
         box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, summary,
           h('button', { class: 'btn small', type: 'button', onclick: function () { rows.forEach(function (r) { if (!r.status) r.status = 'O'; }); drawRows(); drawSummary(); } }, '나머지 모두 출석')));
@@ -1331,7 +1334,7 @@
     var sh = UI.sheet(c.name + ' QR 출석', body, { wide: true, sticky: true, noFocus: true, onClose: function () { timers.forEach(clearInterval); onClose(); } });
     try {
       var info = await call('admin.startCheckin', { classId: c.id });
-      await UI.loadScript('/js/qrcode.js?v=6');
+      await UI.loadScript('/js/qrcode.js?v=8');
       var url = location.origin + '/#/checkin/' + info.code;
       var qr = window.qrcode(0, 'M');
       qr.addData(url); qr.make();
