@@ -1,0 +1,11 @@
+{
+  "name": "myscilab",
+  "private": true,
+  "description": "유현T 과학 숙제 채점소 — 사이트(GitHub Pages, 저장소 맨 위) + 서버(_server/Code.gs, Google Apps Script)",
+  "scripts": {
+    "test": "node _server/dev/run-all.js",
+    "preview": "node _server/dev/server.js",
+    "bump": "node _tools/bump.js",
+    "deploy:server": "node _tools/deploy-server.js"
+  }
+}

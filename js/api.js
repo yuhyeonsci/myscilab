@@ -69,6 +69,7 @@
     Promise.all(reqs.map(function (r) { return call(r[0], r[1], role, { cache: true }); })).then(function (fresh) {
       if (box._live !== token || !box.isConnected) return;
       if (hasCache && JSON.stringify(fresh) === JSON.stringify(cached)) return;
+      if (box._busy) return; // 영상 재생 중 등: 화면을 갈아엎지 않음
       box.innerHTML = '';
       fill(fresh, false);
     }, function (e) {
@@ -80,5 +81,13 @@
     });
   }
 
-  window.API = { call: call, getToken: getToken, setToken: setToken, ApiError: ApiError, peek: peek, clearCache: clearCache, live: live };
+  // 페이지를 닫을 때도 보내지는 요청 (응답은 안 기다림)
+  function beacon(action, data, role) {
+    try {
+      fetch(window.APP_CONFIG.API_URL, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: action, token: role ? getToken(role) : '', data: data || {} }) }).catch(function () { });
+    } catch (e) { }
+  }
+
+  window.API = { beacon: beacon, call: call, getToken: getToken, setToken: setToken, ApiError: ApiError, peek: peek, clearCache: clearCache, live: live };
 })();

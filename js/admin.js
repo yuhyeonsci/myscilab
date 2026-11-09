@@ -57,6 +57,7 @@
       case 'log': return viewLog(p[1], p[2]);
       case 'notice': return editNotice(p[1], p[2]);
       case 'questions': return viewQuestions();
+      case 'card': return viewReportCard(p[1], p[2] || '');
       default: return viewHome();
     }
   }
@@ -247,7 +248,8 @@
         var sel = h('select', { class: 'input sm', style: 'width:auto;flex:0 0 auto', 'aria-label': '월', onchange: function (e) { month = e.target.value; load(); } },
           rep.months.map(function (m) { return h('option', { value: m, selected: m === rep.month, text: m.replace('-', '년 ') + '월' }); }));
         box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' },
-          h('div', null, h('h1', { text: st.name }), h('p', { class: 'small muted', text: st.school + ' ' + st.grade + ' · ' + st.classLabel + (st.joinedAt ? ' · ' + UI.fmtDate(st.joinedAt) + ' 입반' : '') })), sel));
+          h('div', null, h('h1', { text: st.name }), h('p', { class: 'small muted', text: st.school + ' ' + st.grade + ' · ' + st.classLabel + (st.joinedAt ? ' · ' + UI.fmtDate(st.joinedAt) + ' 입반' : '') })),
+          h('div', { class: 'inline' }, st.classId ? h('a', { class: 'btn small', href: '#/card/' + enc(st.classId) + '/' + enc(key) }, icon('print', 15), '성적표') : null, sel)));
         var m = rep.summary.month;
         box.appendChild(h('div', { class: 'grid2', style: 'grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr))' },
           tile('coral', '숙제 제출률', m.rate == null ? '–' : m.rate + '%', m.due ? m.done + ' / ' + m.due + '개' : '마감된 숙제 없음'),
@@ -659,7 +661,7 @@
       root.appendChild(h('h1', { text: isNew ? '새 숙제' : '숙제 수정' }));
       root.appendChild(h('section', { class: 'card form' }, field('제목', title), field('안내', memo)));
       root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '대상 반 · 날짜' }),
-        h('p', { class: 'tiny muted', text: '날짜가 되면 학생에게 열리고, 같은 반의 다음 숙제 수업 시작 시각이 마감이에요.' }), targets.el));
+        h('p', { class: 'tiny muted', text: '날짜가 되면 학생에게 열리고, 같은 반 다음 수업 시작 전(설정 → 마감 · 지각 기준)이 마감이에요.' }), targets.el));
       root.appendChild(h('section', { class: 'sec', style: 'gap:10px' }, h('div', { class: 'sec-h', text: '문항' }),
         h('div', { class: 'card sec', style: 'gap:10px' },
           h('div', { class: 'inline' }, h('span', { class: 'small' }, '문항 수'), countIn, applyBtn),
@@ -928,13 +930,18 @@
       var d = r[0], c = classOf(classId);
       if (!d) { box.appendChild(h('div', { class: 'card empty', text: '차시를 찾을 수 없어요.' })); return; }
       box.appendChild(back([[c ? c.name : '반', '#/class/' + enc(classId) + '/units'], [d.title, '#/unit/' + enc(unitId) + '/' + enc(classId)], ['받은 기록']]));
-      box.appendChild(h('h1', { text: d.title + ' 받은 기록' }));
+      box.appendChild(h('h1', { text: d.title + ' 받은 기록 · 시청 진도' }));
+      if (d.videos.length) box.appendChild(h('p', { class: 'small muted', text: '시청 %는 실제로 재생한 부분만 세요(건너뛰거나 끝으로 넘긴 부분은 안 셈). 90% 넘으면 초록색이에요. 유튜브 영상만 기록돼요.' }));
       if (!d.files.length && !d.videos.length) { box.appendChild(h('div', { class: 'card empty', text: '이 차시에는 영상·파일이 없어요.' })); return; }
       box.appendChild(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
         h('thead', null, h('tr', null, h('th', { class: 'sticky', text: '이름' }), h('th', { text: '공개' }), d.videos.map(function (v) { return h('th', { text: '▶ ' + v.label }); }), d.files.map(function (f) { return h('th', { text: f.fileName }); }))),
         h('tbody', null, d.rows.map(function (x) {
           return h('tr', null, h('td', { class: 'sticky bold', text: x.name }), h('td', { text: x.canV === undefined ? (x.allowed ? '예' : '아니요') : ([x.canV ? '영상' : '', x.canF ? '자료' : ''].filter(Boolean).join('·') || '없음') }),
-            x.videos.map(function (v) { return h('td', { class: 'small', text: v.count ? UI.fmtDT(v.first) + (v.count > 1 ? ' 외 ' + (v.count - 1) + '번' : '') : '–' }); }),
+            x.videos.map(function (v) {
+              if (!v.count && v.pct == null) return h('td', { class: 'small', text: '–' });
+              return h('td', { class: 'small' }, v.pct != null ? h('div', { class: 'wbar' + (v.pct >= 90 ? ' done' : '') }, h('i', { style: 'width:' + v.pct + '%' }), h('b', { text: v.pct + '%' })) : null,
+                h('span', { class: 'muted', text: (v.count ? '처음 ' + UI.fmtDT(v.first) : '') + (v.last ? ' · 최근 ' + UI.fmtDT(v.last) : '') }));
+            }),
             x.files.map(function (f) { return h('td', { class: 'small', text: f.count ? UI.fmtDT(f.first) + (f.count > 1 ? ' 외 ' + (f.count - 1) + '번' : '') : '–' }); }));
         })))));
     });
@@ -994,6 +1001,7 @@
 
   // ===================== 반 리포트 =====================
   function tabReport(box, c) {
+    box.appendChild(h('div', { class: 'inline', style: 'justify-content:flex-end' }, h('a', { class: 'btn', href: '#/card/' + enc(c.id) }, icon('print', 16), '성적표 인쇄 (반 전체)')));
     live(box, [['admin.classReport', { classId: c.id }]], function (r) {
       var d = r[0];
       box.appendChild(h('div', { class: 'sec-h', text: '학생별 (평균 높은 순)' }));
@@ -1014,6 +1022,127 @@
     });
   }
 
+  // ===================== 인쇄용 성적표 =====================
+  function ymd(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function dotDate(s) { return s ? s.slice(0, 4) + '. ' + Number(s.slice(5, 7)) + '. ' + Number(s.slice(8, 10)) + '.' : ''; }
+  function viewReportCard(classId, key) {
+    S.card = S.card || {};
+    var t = new Date();
+    if (!S.card.from) { S.card.from = ymd(new Date(t.getFullYear(), t.getMonth(), 1)); S.card.to = ymd(t); }
+    var fromIn = h('input', { class: 'input sm', type: 'date', value: S.card.from, 'aria-label': '시작일' });
+    var toIn = h('input', { class: 'input sm', type: 'date', value: S.card.to, 'aria-label': '끝일' });
+    var who = h('select', { class: 'input sm', 'aria-label': '학생' }, h('option', { value: '', text: '반 전체' }));
+    var pages = h('div', { class: 'rc-pages' });
+    function setRange(a, b) { fromIn.value = S.card.from = a; toIn.value = S.card.to = b; load(); }
+    function quick(label, fn) { return h('button', { class: 'btn small', type: 'button', onclick: fn }, label); }
+    var bar = h('div', { class: 'rc-bar no-print' },
+      h('div', { class: 'inline', style: 'justify-content:space-between' },
+        h('a', { class: 'btn small', href: key ? '#/student/' + enc(key) : '#/class/' + enc(classId) + '/report' }, icon('left', 15), '돌아가기'),
+        h('button', { class: 'btn primary', type: 'button', onclick: function () { window.print(); } }, icon('print', 16), '인쇄 · PDF 저장')),
+      h('div', { class: 'inline wrap' }, fromIn, h('span', { class: 'muted', text: '~' }), toIn, who),
+      h('div', { class: 'inline wrap' },
+        quick('이번 달', function () { setRange(ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(t)); }),
+        quick('지난달', function () { setRange(ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)), ymd(new Date(t.getFullYear(), t.getMonth(), 0))); }),
+        quick('최근 3개월', function () { setRange(ymd(new Date(t.getFullYear(), t.getMonth() - 2, 1)), ymd(t)); })),
+      h('p', { class: 'tiny muted', text: '인쇄 창에서 대상을 "PDF로 저장"으로 고르면 파일로 저장돼요. 색이 안 나오면 "배경 그래픽"을 켜 주세요. 코멘트 칸은 쓰고 나면 저장돼요.' }));
+    fromIn.addEventListener('change', function () { if (fromIn.value) { S.card.from = fromIn.value; load(); } });
+    toIn.addEventListener('change', function () { if (toIn.value) { S.card.to = toIn.value; load(); } });
+    who.addEventListener('change', function () { location.hash = '#/card/' + enc(classId) + (who.value ? '/' + enc(who.value) : ''); });
+    UI.mount(h('div', { class: 'rc-wrap' }, bar, pages));
+    window.scrollTo(0, 0);
+    var listed = false;
+    function load() {
+      pages.innerHTML = '';
+      loadInto(pages, Promise.all([call('admin.reportCard', { classId: classId, key: key, from: S.card.from, to: S.card.to }), listed ? null : call('admin.students')]), function (r) {
+        var d = r[0];
+        if (!listed) { listed = true; r[1].filter(function (x) { return x.classId === classId; }).sort(function (x, y) { return x.name.localeCompare(y.name); })
+          .forEach(function (x) { who.appendChild(h('option', { value: x.key, selected: x.key === key, text: x.name })); }); }
+        document.title = (key && d.students[0] ? d.students[0].name + ' ' : d.className + ' ') + '성적표 ' + d.from + '~' + d.to;
+        if (!d.students.length) { pages.appendChild(h('div', { class: 'card empty', text: '이 반에 학생이 없어요.' })); return; }
+        d.students.forEach(function (st) { pages.appendChild(cardPage(d, st)); });
+      });
+    }
+    load();
+  }
+  function rcChart(tests) {
+    var pts = tests.filter(function (x) { return x.pct != null; });
+    if (pts.length < 2) return null;
+    var W = 720, H = 150, L = 30, R = 10, T = 12, B = 30, n = pts.length;
+    function X(i) { return L + (n === 1 ? 0 : i * (W - L - R) / (n - 1)); }
+    function Y(v) { return T + (100 - v) * (H - T - B) / 100; }
+    var ns = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs, txt) { var e = document.createElementNS(ns, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (txt != null) e.textContent = txt; return e; }
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'rc-chart', role: 'img', 'aria-label': '테스트 점수 추이' });
+    [0, 50, 100].forEach(function (v) { svg.appendChild(el('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: 'grid' })); svg.appendChild(el('text', { x: L - 6, y: Y(v) + 3, 'text-anchor': 'end', class: 'ax' }, String(v))); });
+    var avg = pts.filter(function (p) { return p.classAvg != null; });
+    if (avg.length >= 2) svg.appendChild(el('polyline', { points: pts.map(function (p, i) { return p.classAvg == null ? '' : X(i) + ',' + Y(p.classAvg); }).join(' ').trim(), class: 'avg' }));
+    svg.appendChild(el('polyline', { points: pts.map(function (p, i) { return X(i) + ',' + Y(p.pct); }).join(' '), class: 'me' }));
+    pts.forEach(function (p, i) {
+      svg.appendChild(el('circle', { cx: X(i), cy: Y(p.pct), r: 3.5, class: 'dot' }));
+      svg.appendChild(el('text', { x: X(i), y: Y(p.pct) - 7, 'text-anchor': 'middle', class: 'val' }, String(p.pct)));
+      svg.appendChild(el('text', { x: X(i), y: H - 12, 'text-anchor': 'middle', class: 'ax' }, Number(p.date.slice(5, 7)) + '/' + Number(p.date.slice(8, 10))));
+    });
+    return h('div', null, svg, h('div', { class: 'rc-legend' }, h('span', { class: 'k me' }), '학생', h('span', { class: 'k avg' }), '반 평균'));
+  }
+  function cardPage(d, st) {
+    function v(x, unit) { return x == null ? '–' : x + (unit || ''); }
+    function kpi(label, val, sub) { return h('div', { class: 'rc-kpi' }, h('div', { class: 'l', text: label }), h('div', { class: 'v', text: val }), h('div', { class: 's', text: sub })); }
+    function section(title, body, extra) { return h('section', { class: 'rc-sec' + (extra ? ' ' + extra : '') }, h('h3', { text: title }), body); }
+    var hw = st.hw, a = st.att;
+    var page = h('article', { class: 'rc-page' });
+    page.appendChild(h('header', { class: 'rc-head' },
+      h('div', null, h('div', { class: 'rc-title', text: '학습 리포트' }), h('div', { class: 'rc-sub', text: '유현T 과학 · ' + d.classLabel })),
+      h('div', { class: 'rc-who' }, h('div', { class: 'n', text: st.name }), h('div', { class: 'rc-sub', text: st.school + (st.grade ? ' ' + st.grade + '학년' : '') }),
+        h('div', { class: 'rc-sub', text: dotDate(d.from) + ' ~ ' + dotDate(d.to) }))));
+    page.appendChild(h('div', { class: 'rc-kpis' },
+      kpi('숙제 제출률', v(hw.rate, '%'), hw.due ? hw.done + ' / ' + hw.due + '개' + (hw.late ? ' · 늦게 ' + hw.late : '') : '마감된 숙제 없음'),
+      kpi('숙제 평균', v(hw.avg, '점'), '반 평균 ' + v(hw.classAvg, '점')),
+      kpi('테스트 평균', v(st.testAvg, '점'), '반 평균 ' + v(st.testClassAvg, '점')),
+      kpi('출석률', v(a.rate, '%'), a.total ? '지각 ' + a.late + ' · 결석 ' + a.absent + (a.video ? ' · 영상 ' + a.video : '') : '출석 기록 없음')));
+    // 테스트
+    var tbody = st.tests.length ? h('table', { class: 'rc-tbl' }, h('thead', null, h('tr', null, h('th', { text: '날짜' }), h('th', { text: '테스트' }), h('th', { class: 'num', text: '점수' }), h('th', { class: 'num', text: '100점 환산' }), h('th', { class: 'num', text: '반 평균' }))),
+      h('tbody', null, st.tests.map(function (x) {
+        return h('tr', null, h('td', { text: UI.fmtDate(x.date) }), h('td', { text: x.title }), h('td', { class: 'num', text: x.absent ? '결시' : x.score + ' / ' + x.max }),
+          h('td', { class: 'num b', text: v(x.pct) }), h('td', { class: 'num', text: v(x.classAvg) }));
+      }))) : h('p', { class: 'rc-empty', text: '이 기간에 본 테스트가 없어요.' });
+    page.appendChild(section('테스트', h('div', null, rcChart(st.tests), tbody)));
+    // 숙제
+    var rows = hw.list;
+    function hwTable(list) {
+      return h('table', { class: 'rc-tbl' }, h('thead', null, h('tr', null, h('th', { text: '날짜' }), h('th', { text: '숙제' }), h('th', { class: 'num', text: '점수' }), h('th', { class: 'num', text: '반 평균' }))),
+        h('tbody', null, list.map(function (x) {
+          var sc = x.status === 'missing' ? h('span', { class: 'rc-miss', text: '미제출' }) : (x.pct == null ? '제출' : x.pct + (x.pending ? '*' : '')) + (x.status === 'late' ? ' (늦게)' : '');
+          return h('tr', null, h('td', { text: UI.fmtDate(x.date) }), h('td', { text: x.title }), h('td', { class: 'num b' }, sc), h('td', { class: 'num', text: v(x.classAvg) }));
+        })));
+    }
+    var hwBody = !rows.length ? h('p', { class: 'rc-empty', text: '이 기간에 마감된 숙제가 없어요.' })
+      : rows.length > 8 ? h('div', { class: 'rc-2col' }, hwTable(rows.slice(0, Math.ceil(rows.length / 2))), hwTable(rows.slice(Math.ceil(rows.length / 2)))) : hwTable(rows);
+    page.appendChild(section('숙제', hwBody));
+    // 출결 + 영역
+    var attBody = h('div', null,
+      h('div', { class: 'rc-att' }, [['출석', a.present], ['영상', a.video], ['지각', a.late], ['결석', a.absent], ['조퇴', a.early]].map(function (x) { return h('div', null, h('b', { text: String(x[1]) }), h('span', { text: x[0] })); })),
+      a.list.length ? h('p', { class: 'rc-small', text: a.list.map(function (x) { return UI.fmtDate(x.date) + ' ' + x.label; }).join(' · ') }) : h('p', { class: 'rc-small', text: a.total ? '지각·결석 없이 잘 나왔어요.' : '이 기간 출석 기록이 없어요.' }));
+    var ar = st.areas.slice(0, 6);
+    var areaBody = ar.length ? h('div', { class: 'rc-areas' }, ar.map(function (x) {
+      return h('div', { class: 'rc-area' + (x.pct != null && x.pct < 60 ? ' weak' : '') }, h('span', { class: 'n', text: x.area }),
+        h('span', { class: 'bar' }, h('i', { style: 'width:' + (x.pct || 0) + '%' })), h('span', { class: 'p', text: v(x.pct, '%') + ' (' + x.correct + '/' + x.total + ')' }));
+    })) : h('p', { class: 'rc-empty', text: '출제 영역이 들어간 문제가 아직 없어요.' });
+    page.appendChild(h('div', { class: 'rc-2col' }, section('출결', attBody), section('영역별 정답률 (낮은 순)', areaBody)));
+    // 코멘트
+    var printed = h('div', { class: 'rc-comment print-only', text: st.comment || '' });
+    var ta = h('textarea', { class: 'input rc-ta no-print', placeholder: '선생님 코멘트 (인쇄돼요)', text: st.comment || '' });
+    var saved = st.comment || '';
+    ta.addEventListener('input', function () { printed.textContent = ta.value; });
+    ta.addEventListener('blur', function () {
+      if (ta.value === saved) return;
+      call('admin.saveComment', { key: st.key, month: st.commentKey, text: ta.value }).then(function () { saved = ta.value; UI.toast(st.name + ' 코멘트 저장했어요.'); }, function (e) { UI.toast(e.message || '저장 못 했어요.'); });
+    });
+    page.appendChild(section('선생님 코멘트', h('div', null, ta, printed), 'rc-cm' + (st.comment ? '' : ' empty')));
+    ta.addEventListener('input', function () { page.querySelector('.rc-cm').classList.toggle('empty', !ta.value.trim()); });
+    page.appendChild(h('footer', { class: 'rc-foot' }, h('span', { text: '유현T 과학 · myscilab.co.kr' }), h('span', { text: '발행 ' + dotDate(d.issued) + (rows.some(function (x) { return x.pending; }) ? ' · * 서술형 채점 전' : '') })));
+    return page;
+  }
+
   // ===================== 설정 =====================
   function viewSettings() {
     var box = h('div', { class: 'sec', style: 'gap:14px;max-width:760px' });
@@ -1021,8 +1150,8 @@
     box.appendChild(h('h1', { text: '설정' }));
     var inner = h('div', { class: 'sec', style: 'gap:14px' });
     box.appendChild(inner);
-    loadInto(inner, Promise.all([classes(true), call('admin.siteSettings', {})]), function (r) {
-      var cl = r[0], site = r[1];
+    loadInto(inner, Promise.all([classes(true), call('admin.siteSettings', {}), call('admin.timing', {})]), function (r) {
+      var cl = r[0], site = r[1], tm = r[2];
       // 반 관리
       var groups = {}, order = [];
       var archived = cl.filter(function (c) { return c.archived; });
@@ -1051,6 +1180,24 @@
             h('span', null, h('b', { text: c.label }), h('span', { class: 'small muted', text: ' · ' + UI.fmtDate(c.archived) + ' 종강 · 학생 ' + c.students })),
             h('div', { class: 'inline' }, h('a', { class: 'btn small', href: '#/class/' + enc(c.id) + '/students' }, '열기'), archiveButton(c)));
         })));
+      // 시간 규칙
+      var dueIn = h('input', { class: 'input', type: 'number', min: 0, max: 180, step: 5, inputmode: 'numeric', value: tm.dueBefore });
+      var lateIn = h('input', { class: 'input', type: 'number', min: 0, max: 60, step: 1, inputmode: 'numeric', value: tm.lateAfter });
+      var ex = h('p', { class: 'tiny muted' });
+      function drawEx() {
+        var b = Number(dueIn.value) || 0, l = Number(lateIn.value) || 0;
+        function at(m) { var t = 12 * 60 + m; return Math.floor(t / 60) + ':' + ('0' + (t % 60)).slice(-2); }
+        ex.textContent = '예) 수업 시작 12:00 → 숙제 마감 ' + at(-b) + ' · QR 출석 ' + at(l) + '까지 출석, 그 뒤는 지각';
+      }
+      dueIn.addEventListener('input', drawEx); lateIn.addEventListener('input', drawEx); drawEx();
+      var tmBtn = h('button', { class: 'btn primary', type: 'button' }, '저장');
+      tmBtn.addEventListener('click', function () {
+        UI.busy(tmBtn, async function () { tm = await call('admin.timing', { save: true, dueBefore: dueIn.value, lateAfter: lateIn.value }); API.clearCache(ROLE); UI.toast('저장했어요.'); }).catch(function () { });
+      });
+      inner.appendChild(h('section', { class: 'card form' }, h('h3', { text: '마감 · 지각 기준' }),
+        field('숙제 마감: 다음 수업 시작 몇 분 전 (분)', dueIn), field('QR 지각: 수업 시작 몇 분 뒤부터 (분)', lateIn), ex,
+        h('p', { class: 'tiny muted', text: '모든 반에 똑같이 적용돼요. 이미 제출·출석한 기록은 바뀌지 않아요. 숙제에 수업 시작 시간을 넣어야 적용돼요.' }),
+        h('div', null, tmBtn)));
       inner.appendChild(h('section', { class: 'card sec', style: 'gap:6px' }, h('h3', { text: '자동 백업' }),
         h('p', { class: 'small', text: site.lastBackup ? '마지막 백업: ' + UI.fmtDT(site.lastBackup) + ' · 매주 월요일 새벽에 드라이브 "백업" 폴더에 시트 사본이 생겨요(최근 8주).' : '아직 백업 기록이 없어요. Apps Script 편집기에서 setupBackup을 한 번 실행하면 매주 자동으로 백업돼요.' })));
       // 비밀번호
@@ -1334,7 +1481,7 @@
     var sh = UI.sheet(c.name + ' QR 출석', body, { wide: true, sticky: true, noFocus: true, onClose: function () { timers.forEach(clearInterval); onClose(); } });
     try {
       var info = await call('admin.startCheckin', { classId: c.id });
-      await UI.loadScript('/js/qrcode.js?v=8');
+      await UI.loadScript('/js/qrcode.js?v=11');
       var url = location.origin + '/#/checkin/' + info.code;
       var qr = window.qrcode(0, 'M');
       qr.addData(url); qr.make();
@@ -1344,7 +1491,7 @@
       var left = h('span', { class: 'bold' });
       var who = h('p', { class: 'small muted' });
       body.appendChild(h('div', null, h('div', { style: 'font-size:28px;font-weight:800;letter-spacing:.2em', text: info.code }),
-        h('p', { class: 'small muted', text: '카메라로 QR을 찍으면 로그인된 학생은 바로 출석돼요.' + (info.startTime ? ' ' + info.startTime + ' 5분 뒤부터는 지각이에요.' : '') })));
+        h('p', { class: 'small muted', text: '카메라로 QR을 찍으면 로그인된 학생은 바로 출석돼요.' + (info.startTime ? ' 수업 시작 ' + info.startTime + ', ' + (info.lateAfter == null ? 10 : info.lateAfter) + '분 뒤부터는 지각이에요.' : ' 오늘 숙제에 수업 시작 시간이 없어서 지각 없이 모두 출석으로 기록돼요.') })));
       var countEl = h('div', { class: 'big' });
       body.appendChild(countEl); body.appendChild(who); body.appendChild(left);
       var stop = h('button', { class: 'btn', type: 'button' }, 'QR 닫기');

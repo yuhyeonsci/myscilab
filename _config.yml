@@ -1,0 +1,10 @@
+# GitHub Pages(Jekyll) 설정: 개발용 파일은 사이트에 올라가지 않게 제외
+# _로 시작하는 폴더(_server, _tools)는 원래 제외됨
+exclude:
+  - CLAUDE.md
+  - package.json
+  - package-lock.json
+  - node_modules
+  - "*.zip"
+include:
+  - CNAME

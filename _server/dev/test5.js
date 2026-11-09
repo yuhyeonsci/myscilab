@@ -1,0 +1,26 @@
+const H = require('./harness.js'); H.ctx.setupApi();
+const call = (a, t, d) => JSON.parse(H.ctx.doPost({ postData: { contents: JSON.stringify({ action: a, token: t, data: d }) } }).s);
+let fails = 0; const check = (l, c, x) => { if (!c) fails++; console.log((c ? 'OK  ' : 'FAIL') + ' ' + l + (x !== undefined ? '  ' + JSON.stringify(x).slice(0, 300) : '')); };
+const at = call('admin.login', '', { password: 'teacherpw1' }).data.token;
+const kim = call('student.login', '', { school: '청담고', name: '김철수', pin: '4821' }).data.token;
+let r = call('admin.saveUnit', at, { title: '진도차시', audience: 'all', videos: [{ label: '1교시', url: 'https://youtu.be/abcdefghijk' }], files: [], targets: [{ classId: 'c1', from: '2026-11-01' }] });
+const uid = r.data.id;
+let u = call('student.units', kim, {}).data; const me = u.list.find(x => x.id === uid);
+check('워터마크 문구', u.wm === '김철수 · 청담고', u.wm);
+check('yt id / 새창 링크 없음', me.videos[0].yt === 'abcdefghijk' && !me.videos[0].open);
+const vid = me.videos[0].id;
+// 100초 영상 = 20칸. 앞 10칸(50초) 시청
+r = call('student.watch', kim, { unitId: uid, videoId: vid, dur: 100, bits: 'ffc', pos: 50, sec: 50 });
+check('50% 기록', r.data.ok && r.data.pct === 50, r.data);
+r = call('student.watch', kim, { unitId: uid, videoId: vid, dur: 100, bits: '00300', pos: 100, sec: 20 });
+check('합치기 (OR) 60%', r.data.pct === 60, r.data);
+r = call('student.watch', kim, { unitId: uid, videoId: vid, dur: 100, bits: 'fffff', pos: 100, sec: 50 });
+check('100% + 완료', r.data.pct === 100, r.data);
+const lg = call('admin.downloadLog', at, { unitId: uid, classId: 'c1' }).data;
+const row = lg.rows.find(x => x.name === '김철수');
+check('강사 기록에 % · 누적초', row.videos[0].pct === 100 && row.videos[0].sec === 120 && !!row.videos[0].done, row.videos[0]);
+u = call('student.units', kim, {}).data.list.find(x => x.id === uid);
+check('학생 화면에 진도', u.videos[0].watch.pct === 100);
+check('잘못된 영상 거부', !call('student.watch', kim, { unitId: uid, videoId: 'nope', dur: 100, bits: 'f' }).data.ok);
+const jung = call('student.login', '', { school: '현대고', name: '정하은', pin: '1111' }).data;
+console.log(fails ? 'FAILS ' + fails : 'ALL OK');
