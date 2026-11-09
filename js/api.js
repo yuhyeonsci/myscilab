@@ -18,7 +18,23 @@
     try { if (t) localStorage.setItem(key(role), t); else localStorage.removeItem(key(role)); } catch (e) { }
   }
 
-  async function call(action, data, role) {
+  // 한 번 받은 응답을 폰에 저장해 두고 다음에 바로 보여 줌 (뒤에서 새로 받아 바꿈)
+  function ckey(role, action, data) { return 'msl_c_' + role + ':' + action + ':' + JSON.stringify(data || {}); }
+  function peek(role, action, data) {
+    try { var s = localStorage.getItem(ckey(role, action, data)); return s ? JSON.parse(s) : null; } catch (e) { return null; }
+  }
+  function store(role, action, data, value) {
+    try { localStorage.setItem(ckey(role, action, data), JSON.stringify(value)); } catch (e) { clearCache(role); }
+  }
+  function clearCache(role) {
+    try {
+      var pre = 'msl_c_' + (role ? role + ':' : ''), del = [];
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(pre) === 0) del.push(k); }
+      del.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) { }
+  }
+
+  async function call(action, data, role, opts) {
     var res;
     try {
       res = await fetch(window.APP_CONFIG.API_URL, {
@@ -31,14 +47,38 @@
     if (!res.ok) throw new ApiError('NETWORK');
     var j;
     try { j = await res.json(); } catch (e) { throw new ApiError('NETWORK'); }
-    if (j.ok) return j.data;
+    if (j.ok) { if (opts && opts.cache && role) store(role, action, data, j.data); return j.data; }
     var code = j.error || 'NETWORK';
     if (role && (code === 'AUTH' || code === 'EXPIRED')) {
       setToken(role, '');
+      clearCache(role);
       window.dispatchEvent(new CustomEvent('auth-lost', { detail: { role: role, code: code } }));
     }
     throw new ApiError(code, j.message || MSG[code] || code);
   }
 
-  window.API = { call: call, getToken: getToken, setToken: setToken, ApiError: ApiError };
+    // 화면 채우기: 저장된 게 있으면 바로 그리고, 새로 받은 내용이 다르면 다시 그림
+  // reqs: [[action, data], ...]  fill(results 배열, fromCache)
+  function live(box, role, reqs, fill, onError) {
+    var token = {};
+    box._live = token;
+    var cached = reqs.map(function (r) { return peek(role, r[0], r[1]); });
+    var hasCache = cached.every(function (x) { return x !== null; });
+    if (hasCache) { box.innerHTML = ''; fill(cached, true); }
+    else { box.innerHTML = ''; box.appendChild(window.UI ? UI.loading() : document.createTextNode('…')); }
+    Promise.all(reqs.map(function (r) { return call(r[0], r[1], role, { cache: true }); })).then(function (fresh) {
+      if (box._live !== token || !box.isConnected) return;
+      if (hasCache && JSON.stringify(fresh) === JSON.stringify(cached)) return;
+      box.innerHTML = '';
+      fill(fresh, false);
+    }, function (e) {
+      if (box._live !== token || !box.isConnected) return;
+      if (e && (e.code === 'AUTH' || e.code === 'EXPIRED')) return;
+      if (hasCache) { if (window.UI) UI.toast('새 내용을 못 받아왔어요. 저장된 내용을 보여 주고 있어요.'); return; }
+      box.innerHTML = '';
+      if (onError) onError(e);
+    });
+  }
+
+  window.API = { call: call, getToken: getToken, setToken: setToken, ApiError: ApiError, peek: peek, clearCache: clearCache, live: live };
 })();

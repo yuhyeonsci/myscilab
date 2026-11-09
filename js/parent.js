@@ -79,11 +79,11 @@
           tile('coral', '숙제 제출률', m.rate == null ? '–' : m.rate + '%', m.due ? m.done + ' / ' + m.due + '개 제출' : '이번 달 마감된 숙제 없음'),
           tile('mint', '숙제 평균', m.avg == null ? '–' : m.avg + '점', '전체 평균 ' + (o.avg == null ? '–' : o.avg + '점')),
           tile('navy', '진도', r.progress.lecturesOpened + ' / ' + r.progress.lecturesTotal, '숙제 기준' + (r.progress.unitsTotal ? ' · 수업 ' + r.progress.unitsOpened + '/' + r.progress.unitsTotal : '')),
-          tile('butter', '미제출', m.missing + '개', m.onTime + '개는 기한 안에 냈어요'));
+          tile('butter', '출석률', r.attendance.rate == null ? '–' : r.attendance.rate + '%', r.attendance.total ? '출석 ' + r.attendance.present + ' · 지각 ' + r.attendance.late + ' · 결석 ' + r.attendance.absent : '이번 달 출석 기록 없음'));
         box.appendChild(tiles);
         var colA = h('div', { class: 'col-a' }), colB = h('div', { class: 'col-b' });
         if (r.comment) colA.appendChild(h('section', { class: 'card tint lav' }, h('div', { class: 'k', text: '선생님 한마디' }), h('p', { style: 'margin-top:6px;white-space:pre-wrap', text: r.comment })));
-        colA.appendChild(h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: monthLabel(r.month) + ' 숙제' }),
+        colA.appendChild(h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: monthLabel(r.month) + ' 숙제' + (m.missing ? ' · 미제출 ' + m.missing + '개' : '') }),
           r.homework.length ? h('div', { class: 'card tight list' }, r.homework.map(function (x) {
             return h('div', { class: 'li' }, h('div', null, h('div', { class: 'bold', text: x.title }), h('div', { class: 'small muted', text: UI.fmtDate(x.date) + (x.deadline ? ' · 마감 ' + UI.fmtDT(x.deadline) : '') })), statusChip(x));
           })) : h('div', { class: 'card empty', text: '이번 달 숙제가 없어요.' })));
@@ -98,6 +98,12 @@
           r.areas.map(function (a) {
             return h('div', { class: 'area-row' }, h('span', { text: a.area }), h('div', { class: 'bar mint' }, h('i', { style: 'width:' + (a.pct || 0) + '%' })), h('span', { class: 'pct', text: (a.pct || 0) + '%' }));
           })));
+        if (r.attendance.list.length) colB.appendChild(h('section', { class: 'card sec', style: 'gap:6px' }, h('h3', { text: '지각·결석·조퇴' }),
+          r.attendance.list.map(function (x) { return h('p', { class: 'small', text: UI.fmtDate(x.date) + ' ' + x.label }); })));
+        if (r.journals.length) colA.appendChild(h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: monthLabel(r.month) + ' 수업 일지' }),
+          h('div', { class: 'card tight list' }, r.journals.slice().reverse().map(function (j) {
+            return h('div', { class: 'li', style: 'align-items:flex-start' }, h('div', null, h('div', { class: 'small muted', text: UI.fmtDate(j.date) }), h('div', { class: 'small', style: 'white-space:pre-wrap', text: j.text })));
+          }))));
         if (r.recentMissing.length) colB.appendChild(h('section', { class: 'card sec', style: 'gap:6px' }, h('h3', { text: '최근 미제출' }),
           r.recentMissing.map(function (x) { return h('p', { class: 'small', text: UI.fmtDate(x.date) + ' · ' + x.title }); })));
         box.appendChild(h('div', { class: 'cols' }, colA, colB));

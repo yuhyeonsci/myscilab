@@ -20,6 +20,7 @@
     API.setToken(ROLE, '');
     try { localStorage.removeItem('msl_student_who'); } catch (e) { }
     S = { pin: '', mustChange: false, who: null, keyHandler: null, home: null };
+    API.clearCache(ROLE);
     location.hash = '#/';
     renderLogin();
   }
@@ -37,6 +38,9 @@
       box.appendChild(UI.errorBox(e, route));
     });
   }
+  // 저장된 내용 먼저 보여 주고 새로 받아 바꾸기
+  function live(box, reqs, fill) { API.live(box, ROLE, reqs, fill, function (e) { box.appendChild(UI.errorBox(e, route)); }); }
+  function callC(action, data) { return API.call(action, data, ROLE, { cache: true }); }
   function fmtAns(type, a) {
     if (a == null || a === '') return '–';
     if (type === 'mcq') return String(a).replace(/[^1-5]/g, '').split('').join('+') || '–';
@@ -65,6 +69,9 @@
       case 'notices': return viewNotices();
       case 'test': return viewTest(decodeURIComponent(p[1] || ''));
       case 'pin': return renderPinChange(false);
+      case 'review': return viewReview();
+      case 'questions': return viewQuestions();
+      case 'checkin': return doCheckin(p[1] || '');
       default: return viewHome();
     }
   }
@@ -172,7 +179,8 @@
   function viewHome() {
     var box = h('div', { class: 'sec', style: 'gap:16px' });
     page('home', box);
-    loadInto(box, call('student.home'), function (d) {
+    live(box, [['student.home', {}]], function (r) {
+      var d = r[0];
       S.home = d;
       saveWho(d.student);
       if (d.mustChange) { S.mustChange = true; return renderPinChange(true); }
@@ -182,6 +190,8 @@
         .sort(function (a, b) { return (a.deadline || '9') < (b.deadline || '9') ? -1 : 1; });
       var next = todo.filter(function (l) { return l.deadline; })[0];
       var exam = d.exams[0];
+      if (d.archived) box.appendChild(h('div', { class: 'card tint butter small' }, h('b', { text: '종강한 반이에요. ' }),
+        UI.daysUntil(d.archived.mediaUntil) >= 0 ? '영상·자료는 ' + UI.fmtDate(d.archived.mediaUntil) + '까지 볼 수 있어요. ' : '', '지난 숙제와 내 기록은 계속 볼 수 있어요.'));
       if (d.notices.length) {
         box.appendChild(h('a', { class: 'notice-strip', href: '#/notices' }, icon('bell', 18),
           h('div', { class: 'txt' }, h('b', { text: '공지' }), ' · ' + d.notices[0].title + (d.notices.length > 1 ? ' 외 ' + (d.notices.length - 1) + '개' : '')), icon('right', 16)));
@@ -200,7 +210,7 @@
       var colB = h('div', { class: 'col-b' },
         exam ? h('a', { class: 'card tint navy only-pc', href: '#/me', style: 'text-decoration:none;color:inherit;padding:20px' },
           h('div', { class: 'k', text: exam.title + '까지' }), h('div', { class: 'huge', style: 'color:var(--navy-ink);margin-top:4px', text: UI.dday(exam.date) }),
-          h('div', { class: 'small', style: 'color:var(--navy-ink);margin-top:2px', text: UI.fmtDate(exam.date) }))
+          h('div', { class: 'small', style: 'color:var(--navy-ink);margin-top:2px', text: UI.fmtDate(exam.date) + (exam.rangeTotal ? ' · 범위 숙제 ' + exam.rangeTotal + '개 중 ' + exam.rangeDone + '개 끝' : '') }))
           : h('a', { class: 'row', href: '#/me' }, h('div', null, h('div', { class: 't', text: '시험 D-day 넣기' }), h('div', { class: 's', text: '내 시험 날짜를 넣으면 홈에 D-day가 떠요' })), icon('right', 18)),
         d.newUnits.length ? h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: '새로 열린 수업' }),
           d.newUnits.map(function (u) {
@@ -208,10 +218,19 @@
               h('div', null, h('div', { class: 't', text: u.title }), h('div', { class: 's', style: 'color:var(--mint-ink)', text: [u.videos ? '영상 ' + u.videos + '개' : '', u.files ? '자료 ' + u.files + '개' : ''].filter(Boolean).join(' · ') })),
               icon('right', 18));
           })) : null,
-        h('a', { class: 'card tint lav', href: '#/wrong', style: 'text-decoration:none;color:inherit' },
-          h('div', { class: 'k', text: '내 오답 모음' }), h('div', { style: 'font-weight:800;font-size:17px;margin-top:4px', text: d.wrongCount ? '다시 볼 문항 ' + d.wrongCount + '개' : '틀린 문항이 없어요' })));
+        d.newAnswers ? h('a', { class: 'row tint navy', href: '#/questions', style: 'border:0' },
+          h('div', null, h('div', { class: 't', text: '선생님 답변 ' + d.newAnswers + '개' }), h('div', { class: 's', style: 'color:var(--navy-ink)', text: '내가 한 질문에 답이 달렸어요' })), icon('right', 18)) : null,
+        h('a', { class: 'card tint lav', href: d.reviewDue ? '#/review' : '#/wrong', style: 'text-decoration:none;color:inherit' },
+          h('div', { class: 'k', text: d.reviewDue ? '오늘 다시 풀 문항' : '내 오답 모음' }),
+          h('div', { style: 'font-weight:800;font-size:17px;margin-top:4px', text: d.reviewDue ? d.reviewDue + '개 다시 풀기' : d.wrongCount ? '다시 볼 문항 ' + d.wrongCount + '개' : '틀린 문항이 없어요' })),
+        d.lastJournal ? h('section', { class: 'card sec', style: 'gap:4px' }, h('div', { class: 'k', text: '지난 수업 (' + UI.fmtDate(d.lastJournal.date) + ')' }),
+          h('p', { class: 'small', style: 'white-space:pre-wrap', text: d.lastJournal.text })) : null);
       box.appendChild(h('div', { class: 'cols' }, colA, colB));
       if (d.upcoming) box.appendChild(h('p', { class: 'small muted', text: '다음 숙제 ' + d.upcoming + '개는 날짜가 되면 열려요.' }));
+      if (!S.prefetched) { // 다른 탭 미리 받아 두기
+        S.prefetched = true;
+        ['student.units', 'student.records', 'student.me', 'student.exams', 'student.wrongNotes'].forEach(function (a) { callC(a, {}).catch(function () { }); });
+      }
     });
   }
 
@@ -222,7 +241,8 @@
     box.appendChild(h('h1', { text: '숙제' }));
     var inner = h('div', { class: 'sec', style: 'gap:16px' });
     box.appendChild(inner);
-    loadInto(inner, call('student.home'), function (d) {
+    live(inner, [['student.home', {}]], function (r) {
+      var d = r[0];
       var todo = d.lectures.filter(function (l) { return l.status !== 'done'; });
       var done = d.lectures.filter(function (l) { return l.status === 'done'; });
       inner.appendChild(h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: '해야 할 숙제 ' + todo.length }),
@@ -287,20 +307,41 @@
     } else setTimeout(load, 0);
     return wrap;
   }
-  // OMR처럼 한 문항씩: 객관식은 고르면 자동으로 다음, 단답·서술은 "다음"(Enter). 마지막엔 답안 확인 → 제출
+  // 숙제 풀기 (처음·재풀이)
   function solver(v, mode, onDone) {
     var qs = mode === 'retry' ? v.questions.filter(function (q) { return v.wrongNos.indexOf(q.no) !== -1; }) : v.questions;
+    return omr({
+      items: qs.map(function (q) {
+        return { key: String(q.no), short: String(q.no), label: q.no + '번', type: q.type, pick: q.pick || 1, hasQ: q.hasQ,
+          img: function () { return call('student.questionImage', { id: v.id, no: q.no }); } };
+      }),
+      confused: mode === 'first',
+      submitLabel: mode === 'retry' ? '재풀이 내기' : '제출하기',
+      confirmMsg: function (left) {
+        var msg = left ? '아직 안 푼 문항이 ' + left + '개 있어요. 그래도 낼까요?' : (mode === 'retry' ? '재풀이를 낼까요? 내면 정답과 해설이 열려요.' : '제출할까요?');
+        if (mode === 'first') msg += '\n처음 낸 답으로 점수가 매겨지고, 낸 뒤에는 바꿀 수 없어요.';
+        return msg;
+      },
+      submit: async function (answers, confusedKeys) {
+        var nv = mode === 'retry' ? await call('student.submitRetry', { id: v.id, answers: answers })
+          : await call('student.submitFirst', { id: v.id, answers: answers, confused: confusedKeys.map(Number) });
+        UI.toast(mode === 'retry' ? '정답과 해설이 열렸어요.' : '제출했어요!');
+        onDone(nv);
+      }
+    });
+  }
+  // OMR처럼 한 문항씩: 객관식은 고르면 자동으로 다음, 단답·서술은 "다음"(Enter). 마지막엔 답안 확인 → 제출
+  // cfg: { items:[{key, short, label, sub?, type, pick, hasQ, img()}], confused, submitLabel, confirmMsg(left), submit(answers, confusedKeys) }
+  function omr(cfg) {
+    var qs = cfg.items;
     var answers = {}, confused = {}, idx = 0, imgs = {}, timer = null;
     var wrap = h('div', { class: 'sec', style: 'gap:12px' });
     var strip = h('div', { class: 'strip', role: 'tablist', 'aria-label': '문항 번호' });
     var stage = h('div', { class: 'sec', style: 'gap:12px' });
     wrap.appendChild(strip); wrap.appendChild(stage);
-    function has(q) { return answers[q.no] != null && String(answers[q.no]).trim() !== ''; }
+    function has(q) { return answers[q.key] != null && String(answers[q.key]).trim() !== ''; }
     function answered() { return qs.filter(has).length; }
-    function img(q) {
-      if (!imgs[q.no]) imgs[q.no] = call('student.questionImage', { id: v.id, no: q.no });
-      return imgs[q.no];
-    }
+    function img(q) { if (!imgs[q.key]) imgs[q.key] = q.img(); return imgs[q.key]; }
     function go(i) {
       clearTimeout(timer);
       idx = Math.max(0, Math.min(qs.length, i));
@@ -312,7 +353,7 @@
       strip.innerHTML = '';
       qs.forEach(function (q, i) {
         strip.appendChild(h('button', { type: 'button', role: 'tab', class: (has(q) ? 'done ' : '') + (i === idx ? 'cur' : ''), 'aria-selected': i === idx ? 'true' : 'false',
-          'aria-label': q.no + '번' + (has(q) ? ' 답함' : ''), text: String(q.no), onclick: function () { go(i); } }));
+          'aria-label': q.label + (has(q) ? ' 답함' : ''), text: q.short, onclick: function () { go(i); } }));
       });
       strip.appendChild(h('button', { type: 'button', role: 'tab', class: 'check-tab' + (idx === qs.length ? ' cur' : ''), 'aria-selected': idx === qs.length ? 'true' : 'false', onclick: function () { go(qs.length); } }, '확인'));
     }
@@ -322,78 +363,70 @@
       if (idx === qs.length) return drawReview();
       var q = qs[idx], pick = q.pick || 1;
       var typeLabel = q.type === 'mcq' ? '객관식' + (pick > 1 ? ' · ' + pick + '개 고르기' : '') : q.type === 'short' ? '단답형' : '서술형';
-      var head = h('div', { class: 'q-h' }, h('div', { class: 'inline' }, h('span', { class: 'q-no', text: q.no + '번' }), h('span', { class: 'small muted', text: (idx + 1) + ' / ' + qs.length }), h('span', { class: 'chip', text: typeLabel })));
-      if (mode === 'first') {
-        var cbtn = h('button', { class: 'confused' + (confused[q.no] ? ' on' : ''), type: 'button', 'aria-pressed': confused[q.no] ? 'true' : 'false', onclick: function () {
-          confused[q.no] = !confused[q.no]; cbtn.classList.toggle('on', confused[q.no]); cbtn.setAttribute('aria-pressed', confused[q.no] ? 'true' : 'false');
+      var head = h('div', { class: 'q-h' }, h('div', { class: 'inline' }, h('span', { class: 'q-no', text: q.label }), h('span', { class: 'small muted', text: (idx + 1) + ' / ' + qs.length }), h('span', { class: 'chip', text: typeLabel })));
+      if (cfg.confused) {
+        var cbtn = h('button', { class: 'confused' + (confused[q.key] ? ' on' : ''), type: 'button', 'aria-pressed': confused[q.key] ? 'true' : 'false', onclick: function () {
+          confused[q.key] = !confused[q.key]; cbtn.classList.toggle('on', confused[q.key]); cbtn.setAttribute('aria-pressed', confused[q.key] ? 'true' : 'false');
         } }, '헷갈려요');
         head.appendChild(cbtn);
       }
-      var card = h('section', { class: 'card q', 'aria-label': q.no + '번' }, head);
+      var card = h('section', { class: 'card q', 'aria-label': q.label }, head, q.sub ? h('p', { class: 'small muted', text: q.sub }) : null);
       if (q.hasQ) {
         var box = h('div', { class: 'qimg' }, h('div', { class: 'loading', style: 'padding:18px 0' }, h('div', { class: 'spin' })));
-        img(q).then(function (url) { box.innerHTML = ''; if (url) box.appendChild(h('img', { src: url, alt: q.no + '번 문제' })); },
-          function () { delete imgs[q.no]; box.innerHTML = ''; box.appendChild(h('p', { class: 'small muted', style: 'padding:12px', text: '문제 사진을 못 불러왔어요. 번호를 다시 눌러 보세요.' })); });
+        img(q).then(function (url) { box.innerHTML = ''; if (url) box.appendChild(h('img', { src: url, alt: q.label + ' 문제' })); },
+          function () { delete imgs[q.key]; box.innerHTML = ''; box.appendChild(h('p', { class: 'small muted', style: 'padding:12px', text: '문제 사진을 못 불러왔어요. 번호를 다시 눌러 보세요.' })); });
         card.appendChild(box);
       }
       var isLast = idx === qs.length - 1;
       var next = h('button', { class: 'btn primary', type: 'button', onclick: function () { go(idx + 1); } }, isLast ? '답안 확인' : '다음', icon('right', 16));
       if (q.type === 'mcq') {
-        var sel = String(answers[q.no] || '').split('').filter(Boolean).map(Number);
+        var sel = String(answers[q.key] || '').split('').filter(Boolean).map(Number);
         var btns = [1, 2, 3, 4, 5].map(function (n) {
-          return h('button', { type: 'button', class: sel.indexOf(n) !== -1 ? 'on' : '', 'aria-pressed': sel.indexOf(n) !== -1 ? 'true' : 'false', 'aria-label': q.no + '번 ' + n, text: String(n), onclick: function () { choose(n); } });
+          return h('button', { type: 'button', class: sel.indexOf(n) !== -1 ? 'on' : '', 'aria-pressed': sel.indexOf(n) !== -1 ? 'true' : 'false', 'aria-label': q.label + ' ' + n, text: String(n), onclick: function () { choose(n); } });
         });
         var choose = function (n) {
           var k = sel.indexOf(n);
           if (k !== -1) sel.splice(k, 1); else { if (sel.length >= pick) sel.shift(); sel.push(n); }
           btns.forEach(function (b, j) { var on = sel.indexOf(j + 1) !== -1; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
-          if (sel.length) answers[q.no] = sel.slice().sort().join(''); else delete answers[q.no];
+          if (sel.length) answers[q.key] = sel.slice().sort().join(''); else delete answers[q.key];
           drawStrip();
           clearTimeout(timer);
           if (sel.length === pick) timer = setTimeout(function () { go(idx + 1); }, 220);
         };
         card._choose = choose;
-        card.appendChild(h('div', { class: 'pad big', role: 'group', 'aria-label': q.no + '번 답' }, btns));
+        card.appendChild(h('div', { class: 'pad big', role: 'group', 'aria-label': q.label + ' 답' }, btns));
         if (pick > 1) card.appendChild(h('p', { class: 'small muted', style: 'text-align:center', text: pick + '개를 모두 고르면 다음 문항으로 넘어가요.' }));
       } else if (q.type === 'short') {
-        var inp = h('input', { class: 'input', 'aria-label': q.no + '번 답', placeholder: '답 입력 후 Enter', autocomplete: 'off', enterkeyhint: 'next', value: answers[q.no] || '',
-          oninput: function (e) { answers[q.no] = e.target.value; drawStrip(); },
+        var inp = h('input', { class: 'input', 'aria-label': q.label + ' 답', placeholder: '답 입력 후 Enter', autocomplete: 'off', enterkeyhint: 'next', value: answers[q.key] || '',
+          oninput: function (e) { answers[q.key] = e.target.value; drawStrip(); },
           onkeydown: function (e) { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(idx + 1); } } });
         card.appendChild(inp);
         setTimeout(function () { inp.focus(); }, 30);
       } else {
-        var ta = h('textarea', { class: 'input', 'aria-label': q.no + '번 답', placeholder: '답을 써 주세요', text: answers[q.no] || '',
-          oninput: function (e) { answers[q.no] = e.target.value; drawStrip(); } });
-        card.appendChild(ta);
+        card.appendChild(h('textarea', { class: 'input', 'aria-label': q.label + ' 답', placeholder: '답을 써 주세요', text: answers[q.key] || '',
+          oninput: function (e) { answers[q.key] = e.target.value; drawStrip(); } }));
       }
       stage.appendChild(card);
       stage.appendChild(h('div', { class: 'submitbar' },
         h('button', { class: 'btn', type: 'button', disabled: idx === 0, onclick: function () { go(idx - 1); } }, icon('left', 16), '이전'),
         h('span', { class: 'small muted', text: answered() + ' / ' + qs.length + ' 답함' }), next));
-      // 다음 문항 사진 미리 받아 두기
       var nq = qs[idx + 1];
-      if (nq && nq.hasQ) img(nq);
+      if (nq && nq.hasQ) img(nq); // 다음 문항 사진 미리 받아 두기
     }
     function drawReview() {
       var left = qs.length - answered();
       stage.appendChild(h('section', { class: 'card sec', style: 'gap:12px' },
         h('div', null, h('h2', { text: '답안 확인' }), h('p', { class: 'small muted', style: 'margin-top:2px', text: left ? '안 푼 문항이 ' + left + '개 있어요. 눌러서 풀 수 있어요.' : '모두 풀었어요. 고칠 문항은 눌러서 고쳐요.' })),
         h('div', { class: 'review' }, qs.map(function (q, i) {
-          var a = has(q) ? (q.type === 'mcq' ? fmtAns('mcq', answers[q.no]) : String(answers[q.no]).trim()) : '안 품';
+          var a = has(q) ? (q.type === 'mcq' ? fmtAns('mcq', answers[q.key]) : String(answers[q.key]).trim()) : '안 품';
           return h('button', { type: 'button', class: has(q) ? '' : 'miss', onclick: function () { go(i); } },
-            h('span', { class: 'n', text: q.no + '번' + (confused[q.no] ? ' ?' : '') }), h('span', { class: 'a', text: a }));
+            h('span', { class: 'n', text: q.label + (confused[q.key] ? ' ?' : '') }), h('span', { class: 'a', text: a }));
         }))));
-      var btn = h('button', { class: 'btn primary', type: 'button' }, mode === 'retry' ? '재풀이 내기' : '제출하기');
+      var btn = h('button', { class: 'btn primary', type: 'button' }, cfg.submitLabel);
       btn.addEventListener('click', async function () {
-        var msg = left ? '아직 안 푼 문항이 ' + left + '개 있어요. 그래도 낼까요?' : (mode === 'retry' ? '재풀이를 낼까요? 내면 정답과 해설이 열려요.' : '제출할까요?');
-        if (mode === 'first') msg += '\n처음 낸 답으로 점수가 매겨지고, 낸 뒤에는 바꿀 수 없어요.';
-        if (!(await UI.confirm(msg, '내기'))) return;
+        if (!(await UI.confirm(cfg.confirmMsg(left), '내기'))) return;
         UI.busy(btn, async function () {
-          var conf = Object.keys(confused).filter(function (k) { return confused[k]; }).map(Number);
-          var nv = mode === 'retry' ? await call('student.submitRetry', { id: v.id, answers: answers })
-            : await call('student.submitFirst', { id: v.id, answers: answers, confused: conf });
-          UI.toast(mode === 'retry' ? '정답과 해설이 열렸어요.' : '제출했어요!');
-          onDone(nv);
+          await cfg.submit(answers, Object.keys(confused).filter(function (k) { return confused[k]; }));
         }).catch(function () { });
       });
       stage.appendChild(h('div', { class: 'submitbar' },
@@ -429,6 +462,7 @@
       if (it.hasImage) btns.appendChild(imgButton('해설 그림 보기', function () {
         return ctx.src === 'test' ? call('student.testImage', { id: ctx.id, no: it.no }) : call('student.explanationImage', { id: ctx.id, no: it.no });
       }, extra));
+      btns.appendChild(askButton(ctx.src, ctx.id, it.no));
       wrap.appendChild(h('div', { class: 'card res' },
         h('div', { class: 'mark ' + it.result, 'aria-label': it.result === 'O' ? '맞음' : it.result === 'X' ? '틀림' : '채점 중', text: it.result === 'O' ? '○' : it.result === 'X' ? '✕' : '…' }),
         h('div', { class: 'sec', style: 'gap:6px' },
@@ -469,13 +503,14 @@
     box.appendChild(h('h1', { text: '자료실' }));
     var inner = h('div', { class: 'grid2', style: 'align-items:start' });
     box.appendChild(inner);
-    loadInto(inner, call('student.units'), function (d) {
+    live(inner, [['student.units', {}]], function (r) {
+      var d = r[0];
       if (!d.list.length) {
-        inner.appendChild(h('div', { class: 'card empty', text: d.upcoming ? '아직 열린 수업이 없어요. 날짜가 되면 여기에 열려요.' : '지금 볼 수 있는 수업 자료가 없어요.' }));
+        inner.appendChild(h('div', { class: 'card empty', text: d.closed ? '종강하고 1주가 지나서 영상·자료가 닫혔어요.' : d.upcoming ? '아직 열린 수업이 없어요. 날짜가 되면 여기에 열려요.' : '지금 볼 수 있는 수업 자료가 없어요.' }));
         return;
       }
       d.list.forEach(function (u) { inner.appendChild(unitCard(u)); });
-      if (d.upcoming) box.appendChild(h('p', { class: 'small muted', text: '다음 수업 ' + d.upcoming + '개는 날짜가 되면 열려요.' }));
+      if (d.upcoming) inner.appendChild(h('p', { class: 'small muted', style: 'grid-column:1/-1', text: '다음 수업 ' + d.upcoming + '개는 날짜가 되면 열려요.' }));
     });
   }
   function unitCard(u) {
@@ -488,6 +523,7 @@
       var holder = h('div', { class: 'vid' }, vb);
       vb.addEventListener('click', function () {
         if (frame) { frame.remove(); frame = null; vb.setAttribute('aria-expanded', 'false'); return; }
+        call('student.viewVideo', { unitId: u.id, videoId: v.id }).catch(function () { });
         frame = h('div', null, h('div', { class: 'frame' }, h('iframe', { src: v.embed, title: u.title + ' ' + (v.label || '영상'), allow: 'autoplay; encrypted-media; fullscreen; picture-in-picture', allowfullscreen: true })),
           h('a', { href: v.open, target: '_blank', rel: 'noopener', class: 'small', style: 'display:inline-block;margin-top:6px', text: '새 창에서 보기' }));
         holder.appendChild(frame);
@@ -521,7 +557,7 @@
     box.appendChild(h('h1', { text: '내 기록' }));
     var inner = h('div');
     box.appendChild(inner);
-    loadInto(inner, Promise.all([call('student.records'), call('student.me'), call('student.exams')]), function (r) {
+    live(inner, [['student.records', {}], ['student.me', {}], ['student.exams', {}]], function (r) {
       var rec = r[0], me = r[1], exams = r[2];
       saveWho(me);
       var colA = h('div', { class: 'col-a' });
@@ -529,6 +565,8 @@
       // 숙제
       colA.appendChild(h('a', { class: 'row tint lav', href: '#/wrong', style: 'border:0' },
         h('div', null, h('div', { class: 't', text: '오답 모음' }), h('div', { class: 's', text: '틀린 문항만 모아서 다시 보기' })), icon('right', 18)));
+      colA.appendChild(h('a', { class: 'row', href: '#/questions' },
+        h('div', null, h('div', { class: 't', text: '내 질문' }), h('div', { class: 's', text: '선생님께 한 질문과 답변' })), icon('right', 18)));
       colA.appendChild(h('section', { class: 'sec' }, h('div', { class: 'sec-h', text: '숙제 점수' }),
         rec.homework.length ? h('div', { class: 'card tight list' }, rec.homework.map(function (x) {
           return h('a', { class: 'li', href: '#/hw/' + encodeURIComponent(x.id) },
@@ -570,8 +608,10 @@
       list.forEach(function (x) {
         var past = UI.daysUntil(x.date) < 0;
         card.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' },
-          h('div', null, h('span', { class: 'bold', text: x.title }), h('span', { class: 'small muted', text: ' · ' + UI.fmtDate(x.date) })),
+          h('div', null, h('span', { class: 'bold', text: x.title }), h('span', { class: 'small muted', text: ' · ' + UI.fmtDate(x.date) }),
+            h('div', { class: 'tiny muted', text: x.rangeTotal ? '범위 숙제 ' + x.rangeTotal + '개 중 ' + x.rangeDone + '개 끝' : '범위를 고르면 진도가 보여요' })),
           h('div', { class: 'inline' }, h('span', { class: 'chip ' + (past ? '' : 'navy'), text: UI.dday(x.date) }),
+            h('button', { class: 'btn small', type: 'button', onclick: function () { rangeSheet(x, draw); } }, '범위'),
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': x.title + ' 지우기', style: 'width:30px;height:30px', onclick: function (e) {
               UI.busy(e.currentTarget, async function () { draw(await call('student.deleteExam', { id: x.id })); }).catch(function () { });
             } }, icon('x', 14)))));
@@ -607,11 +647,16 @@
     var box = h('div', { class: 'sec', style: 'gap:16px' });
     page('me', box);
     box.appendChild(back('#/me', '내 기록', '오답 모음'));
-    box.appendChild(h('div', null, h('h1', { text: '오답 모음' }), h('p', { class: 'small muted', style: 'margin-top:2px', text: '처음 낸 답이 틀린 문항만 모았어요. 재풀이로 맞힌 것은 "고침"으로 표시돼요.' })));
+    box.appendChild(h('div', null, h('h1', { text: '오답 모음' }), h('p', { class: 'small muted', style: 'margin-top:2px', text: '처음 낸 답이 틀린 문항만 모았어요. "다시 풀기"로 3일 뒤, 7일 뒤에 한 번씩 더 맞히면 완벽으로 바뀌어요.' })));
     var inner = h('div', { class: 'sec', style: 'gap:14px' });
     box.appendChild(inner);
-    loadInto(inner, call('student.wrongNotes'), function (items) {
+    live(inner, [['student.wrongNotes', {}]], function (r) {
+      var items = r[0];
       var filter = 'left';
+      var due = items.filter(function (x) { return x.due; }).length;
+      inner.appendChild(due ? h('a', { class: 'row tint lav', href: '#/review', style: 'border:0' },
+        h('div', null, h('div', { class: 't', text: '오늘 다시 풀 문항 ' + due + '개' }), h('div', { class: 's', text: '맞히면 다음 복습 날짜로 넘어가요' })), icon('right', 18))
+        : h('p', { class: 'small muted', text: '오늘 다시 풀 문항은 없어요.' }));
       var seg = h('div', { class: 'seg', role: 'tablist' });
       var list = h('div', { class: 'sec', style: 'gap:14px' });
       var opts = [['left', '못 고친 것'], ['hw', '숙제'], ['test', '테스트'], ['all', '전체']];
@@ -621,7 +666,7 @@
           seg.appendChild(h('button', { type: 'button', role: 'tab', class: filter === o[0] ? 'on' : '', 'aria-selected': filter === o[0] ? 'true' : 'false', onclick: function () { filter = o[0]; draw(); } }, o[1]));
         });
         list.innerHTML = '';
-        var shown = items.filter(function (x) { return filter === 'all' || (filter === 'left' ? !x.fixed : x.src === filter); });
+        var shown = items.filter(function (x) { return filter === 'all' || (filter === 'left' ? !x.mastered : x.src === filter); });
         if (!shown.length) { list.appendChild(h('div', { class: 'card empty', text: '여기에 보일 문항이 없어요.' })); return; }
         var groups = [], by = {};
         shown.forEach(function (x) { var k = x.src + '|' + x.id; if (!by[k]) { by[k] = { head: x, items: [] }; groups.push(by[k]); } by[k].items.push(x); });
@@ -646,14 +691,143 @@
     return h('div', { class: 'card sec', style: 'gap:8px' },
       h('div', { class: 'inline', style: 'justify-content:space-between' },
         h('div', { class: 'inline' }, h('b', { text: x.no + '번' }), h('span', { class: 'small muted', text: x.area })),
-        x.fixed ? h('span', { class: 'chip mint', text: '고침' }) : x.revealed ? h('span', { class: 'chip coral', text: '다시 보기' }) : h('span', { class: 'chip butter', text: '정답 공개 전' })),
+        h('div', { class: 'chips' },
+          x.mastered ? h('span', { class: 'chip mint', text: '완벽' }) : x.stage ? h('span', { class: 'chip navy', text: '복습 ' + x.stage + '/3' }) : null,
+          x.fixed && !x.mastered ? h('span', { class: 'chip mint', text: '재풀이로 고침' }) : null,
+          !x.revealed ? h('span', { class: 'chip butter', text: '정답 공개 전' }) : (!x.fixed && !x.stage ? h('span', { class: 'chip coral', text: '다시 보기' }) : null))),
       h('div', { class: 'kv' },
         h('span', null, '내 답 ', h('b', { text: fmtAns(x.type, x.mine) })),
         x.retry ? h('span', null, '재풀이 ', h('b', { text: fmtAns(x.type, x.retry) })) : null,
         x.revealed && x.answer ? h('span', null, '정답 ', h('b', { style: 'color:var(--mint-ink)', text: fmtAns(x.type, x.answer) })) : null),
       !x.revealed ? h('p', { class: 'small muted' }, '재풀이를 마치면 정답과 해설이 보여요. ', h('a', { href: '#/hw/' + encodeURIComponent(x.id), text: '재풀이 하러 가기' })) : null,
       x.revealed && x.expText ? h('div', { class: 'exp', text: x.expText }) : null,
-      btns.childNodes.length ? btns : null, extra);
+      x.nextAt && !x.mastered ? h('p', { class: 'tiny muted', text: '다음 복습 ' + UI.fmtDate(x.nextAt) }) : null,
+      h('div', { class: 'btns' }, btns.childNodes.length ? btns : null, x.revealed ? askButton(x.src, x.id, x.no) : null), extra);
+  }
+
+  // ===================== 시험 범위 고르기 =====================
+  function rangeSheet(exam, redraw) {
+    var box = h('div', { class: 'sec', style: 'gap:10px' }, UI.loading());
+    var sh = UI.sheet(exam.title + ' 범위 숙제', box);
+    callC('student.home', {}).then(function (d) {
+      box.innerHTML = '';
+      var picked = {};
+      (exam.range || []).forEach(function (id) { picked[id] = true; });
+      var list = d.lectures.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      if (!list.length) { box.appendChild(h('p', { class: 'empty', text: '고를 숙제가 아직 없어요.' })); return; }
+      box.appendChild(h('p', { class: 'small muted', text: '시험 범위에 들어가는 숙제를 골라 주세요.' }));
+      list.forEach(function (l) {
+        box.appendChild(h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!picked[l.id], onchange: function (e) { picked[l.id] = e.target.checked; } }),
+          h('span', null, l.title, h('span', { class: 'small muted', text: ' · ' + UI.fmtDate(l.date) + (l.status === 'done' ? ' · 끝' : '') }))));
+      });
+      var b = h('button', { class: 'btn primary', type: 'button' }, '저장');
+      b.addEventListener('click', function () {
+        UI.busy(b, async function () {
+          var ids = Object.keys(picked).filter(function (k) { return picked[k]; });
+          var ex = await call('student.saveExamRange', { id: exam.id, lectureIds: ids });
+          sh.close(); redraw(ex); UI.toast('범위를 저장했어요.');
+        }).catch(function () { });
+      });
+      box.appendChild(b);
+    }, function (e) { box.innerHTML = ''; box.appendChild(h('p', { class: 'err', text: e.message })); });
+  }
+
+  // ===================== 질문하기 =====================
+  function askButton(src, id, no) {
+    return h('button', { class: 'btn small', type: 'button', onclick: function () {
+      var ta = h('textarea', { class: 'input', placeholder: '어디가 이해가 안 되는지 써 주세요', maxlength: '500' });
+      var b = h('button', { class: 'btn primary', type: 'submit' }, '질문 보내기');
+      var sh = UI.sheet(no + '번 질문하기', h('form', { class: 'form', onsubmit: function (e) {
+        e.preventDefault();
+        UI.busy(b, async function () { await call('student.ask', { src: src, id: id, no: no, text: ta.value }); sh.close(); UI.toast('질문을 보냈어요. 선생님이 답하면 홈에 떠요.'); }).catch(function () { });
+      } }, ta, h('p', { class: 'tiny muted', text: '선생님만 볼 수 있어요.' }), b));
+    } }, '질문하기');
+  }
+  function viewQuestions() {
+    var box = h('div', { class: 'sec', style: 'gap:16px' });
+    page('me', box);
+    box.appendChild(back('#/me', '내 기록', '내 질문'));
+    box.appendChild(h('h1', { text: '내 질문' }));
+    var inner = h('div', { class: 'sec', style: 'gap:12px' });
+    box.appendChild(inner);
+    live(inner, [['student.questions', {}]], function (r) {
+      var list = r[0];
+      if (!list.length) { inner.appendChild(h('div', { class: 'card empty', text: '아직 한 질문이 없어요. 해설 아래 "질문하기"로 물어볼 수 있어요.' })); return; }
+      list.forEach(function (q) {
+        inner.appendChild(h('article', { class: 'card sec', style: 'gap:8px' },
+          h('div', { class: 'inline', style: 'justify-content:space-between' },
+            h('a', { href: q.src === 'test' ? '#/test/' + encodeURIComponent(q.refId) : '#/hw/' + encodeURIComponent(q.refId), class: 'bold', style: 'color:inherit', text: q.title + ' · ' + q.no + '번' }),
+            q.answer ? h('span', { class: 'chip ' + (q.isNew ? 'coral' : 'mint'), text: q.isNew ? '새 답변' : '답변 완료' }) : h('span', { class: 'chip butter', text: '기다리는 중' })),
+          h('p', { class: 'small', style: 'white-space:pre-wrap', text: q.text }),
+          q.answer ? h('div', { class: 'exp' }, h('b', { text: '선생님 ' }), q.answer) : null,
+          h('p', { class: 'tiny muted', text: UI.fmtDT(q.askedAt) })));
+      });
+      if (list.some(function (q) { return q.isNew; })) call('student.seenAnswers', {}).catch(function () { });
+    });
+  }
+
+  // ===================== 오답 다시 풀기 =====================
+  function viewReview() {
+    var box = h('div', { class: 'sec', style: 'gap:16px' });
+    page('me', box);
+    box.appendChild(back('#/wrong', '오답 모음', '다시 풀기'));
+    var inner = h('div', { class: 'sec', style: 'gap:12px' });
+    box.appendChild(inner);
+    loadInto(inner, call('student.reviewSet'), function (items) {
+      if (!items.length) { inner.appendChild(h('div', { class: 'card empty', text: '오늘 다시 풀 문항이 없어요. 복습 날짜가 되면 여기에 나와요.' })); return; }
+      inner.appendChild(h('div', null, h('h1', { text: '오답 다시 풀기' }), h('p', { class: 'small muted', style: 'margin-top:2px', text: items.length + '문항 · 맞히면 3일 뒤, 7일 뒤에 한 번씩 더 나오고, 틀리면 내일 다시 나와요.' })));
+      inner.appendChild(omr({
+        items: items.map(function (x, i) {
+          return { key: x.src + '|' + x.id + '|' + x.no, short: String(i + 1), label: x.no + '번', sub: x.title + ' · ' + x.area + (x.stage ? ' · 복습 ' + x.stage + '/3' : ''),
+            type: x.type, pick: x.pick || 1, hasQ: x.hasQ, img: function () { return call('student.questionImage', { id: x.id, no: x.no }); } };
+        }),
+        confused: false,
+        submitLabel: '채점하기',
+        confirmMsg: function (left) { return left ? '안 푼 문항이 ' + left + '개 있어요. 그래도 채점할까요?' : '채점할까요?'; },
+        submit: async function (answers) {
+          var list = items.map(function (x) { return { src: x.src, id: x.id, no: x.no, answer: answers[x.src + '|' + x.id + '|' + x.no] || '' }; });
+          var res = await call('student.reviewSubmit', { answers: list });
+          API.clearCache(ROLE);
+          showReviewResult(inner, res);
+        }
+      }));
+    });
+  }
+  function showReviewResult(box, res) {
+    if (S.keyHandler) { document.removeEventListener('keydown', S.keyHandler); S.keyHandler = null; }
+    box.innerHTML = '';
+    var ok = res.filter(function (x) { return x.correct; }).length;
+    box.appendChild(h('section', { class: 'card tint coral', style: 'padding:18px 20px' }, h('div', { class: 'k', text: '다시 풀기 결과' }),
+      h('div', { class: 'big', style: 'margin-top:2px', text: res.length + '문항 중 ' + ok + '개 맞힘' })));
+    res.forEach(function (x) {
+      var extra = h('div', { class: 'sec' });
+      box.appendChild(h('div', { class: 'card res' },
+        h('div', { class: 'mark ' + (x.correct ? 'O' : 'X'), text: x.correct ? '○' : '✕' }),
+        h('div', { class: 'sec', style: 'gap:6px' },
+          h('div', { class: 'inline' }, h('b', { text: x.title + ' ' + x.no + '번' }), h('span', { class: 'small muted', text: x.area }),
+            x.stage >= 3 ? h('span', { class: 'chip mint', text: '완벽' }) : h('span', { class: 'chip navy', text: '다음 ' + UI.fmtDate(x.nextAt) })),
+          h('div', { class: 'kv' }, h('span', null, '내 답 ', h('b', { text: fmtAns(x.type, x.mine) })), h('span', null, '정답 ', h('b', { style: 'color:var(--mint-ink)', text: fmtAns(x.type, x.answer) }))),
+          x.expText ? h('div', { class: 'exp', text: x.expText }) : null,
+          h('div', { class: 'btns' },
+            x.hasImage ? imgButton('해설 그림 보기', function () { return x.src === 'test' ? call('student.testImage', { id: x.id, no: x.no }) : call('student.explanationImage', { id: x.id, no: x.no }); }, extra) : null,
+            askButton(x.src, x.id, x.no)), extra)));
+    });
+    box.appendChild(h('a', { class: 'btn', href: '#/wrong', style: 'align-self:flex-start' }, '오답 모음으로'));
+    window.scrollTo(0, 0);
+  }
+
+  // ===================== QR 출석 =====================
+  function doCheckin(code) {
+    var box = h('div', { class: 'sec', style: 'gap:16px;max-width:440px' });
+    page('home', box);
+    loadInto(box, call('student.checkin', { code: code }), function (r) {
+      var late = r.status === 'L';
+      box.appendChild(h('section', { class: 'card tint ' + (late ? 'butter' : 'mint'), style: 'padding:28px 20px;text-align:center' },
+        h('div', { style: 'font-size:44px;line-height:1', text: late ? '⏰' : '✓' }),
+        h('div', { class: 'big', style: 'margin-top:10px', text: r.already ? '이미 ' + r.label + '했어요' : r.label + ' 완료!' }),
+        h('p', { class: 'small', style: 'margin-top:4px', text: UI.fmtDate(r.date) + (late ? ' · 수업 시작 시각이 지나서 지각으로 기록됐어요' : '') })));
+      box.appendChild(h('a', { class: 'btn primary', href: '#/' }, '홈으로'));
+    });
   }
 
   // ===================== 공지 =====================
@@ -664,7 +838,8 @@
     box.appendChild(h('h1', { text: '공지' }));
     var inner = h('div', { class: 'sec', style: 'gap:12px' });
     box.appendChild(inner);
-    loadInto(inner, call('student.notices'), function (list) {
+    live(inner, [['student.notices', {}]], function (r) {
+      var list = r[0];
       if (!list.length) { inner.appendChild(h('div', { class: 'card empty', text: '지금 걸린 공지가 없어요.' })); return; }
       list.forEach(function (n) {
         var extra = h('div', { class: 'sec' });

@@ -324,3 +324,16 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 }
 .target { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
 .target.on { border-color: var(--primary); }
+
+/* 출석 버튼 · 메모 · QR */
+.att { display: inline-flex; gap: 4px; flex-wrap: nowrap; }
+.att button { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 99px; padding: 6px 10px; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.att button.on.mint { background: var(--mint); color: var(--mint-ink); border-color: transparent; }
+.att button.on.butter { background: var(--butter); color: var(--butter-ink); border-color: transparent; }
+.att button.on.coral { background: var(--coral); color: var(--coral-ink); border-color: transparent; }
+.att button.on.lav { background: var(--lav); color: var(--lav-ink); border-color: transparent; }
+@media (max-width: 420px) { .att button { padding: 6px 8px; font-size: 12px; } }
+.notebox { text-align: left; width: 100%; border: 1px solid var(--line2); background: var(--bg); border-radius: 14px; padding: 10px 12px; cursor: pointer; color: var(--ink); }
+.notebox.pinned { border-color: var(--butter); background: var(--butter); }
+.qrbox { background: #fff; padding: 16px; border-radius: 18px; display: inline-block; }
+.qrbox img, .qrbox canvas { display: block; width: min(300px, 70vw) !important; height: auto !important; }

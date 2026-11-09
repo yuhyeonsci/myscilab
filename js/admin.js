@@ -4,12 +4,13 @@
   var S = { classes: null, dash: null };
   var NAV = [
     { href: '#/', label: '홈', icon: 'home', key: 'home' },
+    { href: '#/questions', label: '질문함', icon: 'chat', key: 'questions' },
     { href: '#/students', label: '학생 찾기', icon: 'users', key: 'students' },
     { href: '#/settings', label: '설정', icon: 'gear', key: 'settings' }
   ];
-  var TABS = [['students', '학생'], ['hw', '숙제'], ['tests', '테스트'], ['units', '자료실'], ['notices', '공지'], ['report', '리포트']];
+  var TABS = [['students', '학생'], ['attend', '출석'], ['hw', '숙제'], ['tests', '테스트'], ['units', '자료실'], ['notices', '공지'], ['report', '리포트']];
   function call(a, d) { return API.call(a, d, ROLE); }
-  function logout() { API.setToken(ROLE, ''); S = { classes: null, dash: null }; renderLogin(); }
+  function logout() { API.setToken(ROLE, ''); API.clearCache(ROLE); S = { classes: null, dash: null }; renderLogin(); }
   function page(active, content) { UI.mount(UI.shell({ nav: NAV, active: active, who: ['강사', '유현T'], content: content, onLogout: logout })); window.scrollTo(0, 0); }
   function enc(s) { return encodeURIComponent(s); }
   function loadInto(box, promise, fill) {
@@ -20,6 +21,8 @@
       box.appendChild(UI.errorBox(e, route));
     });
   }
+  // 저장된 내용 먼저 보여 주고 새로 받아 바꾸기
+  function live(box, reqs, fill) { API.live(box, ROLE, reqs, fill, function (e) { box.appendChild(UI.errorBox(e, route)); }); }
   function back(items) {
     var nav = h('nav', { class: 'backrow', 'aria-label': '위치' });
     items.forEach(function (it, i) {
@@ -53,6 +56,7 @@
       case 'unit': return editUnit(p[1], p[2]);
       case 'log': return viewLog(p[1], p[2]);
       case 'notice': return editNotice(p[1], p[2]);
+      case 'questions': return viewQuestions();
       default: return viewHome();
     }
   }
@@ -85,8 +89,9 @@
     box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h1', { text: '강사 홈' }), h('span', { class: 'small muted', text: UI.fmtDate(UI.todayStr()) })));
     var inner = h('div', { class: 'sec', style: 'gap:14px' });
     box.appendChild(inner);
-    loadInto(inner, Promise.all([call('admin.dashboard'), classes(true)]), function (r) {
-      var d = r[0]; S.dash = d;
+    live(inner, [['admin.dashboard', {}], ['admin.classes', {}]], function (r) {
+      var d = r[0]; S.dash = d; S.classes = r[1];
+      inner.appendChild(todoCard(d));
       if (!d.academies.length) {
         inner.appendChild(h('div', { class: 'card empty' }, h('p', { text: '아직 반이 없어요. 반부터 만들어 주세요.' })));
         inner.appendChild(h('button', { class: 'btn primary', type: 'button', onclick: function () { classSheet(null); } }, '+ 반 만들기'));
@@ -117,6 +122,7 @@
           if (c.missing) chips.push(h('span', { class: 'chip butter', text: '미제출 ' + c.missing }));
           if (c.essayPending) chips.push(h('span', { class: 'chip lav', text: '채점 ' + c.essayPending }));
           if (c.dropping) chips.push(h('span', { class: 'chip coral', text: '점수 하락 ' + c.dropping }));
+          if (c.absentStreak && c.absentStreak.length) chips.push(h('span', { class: 'chip coral', title: c.absentStreak.join(', '), text: '연속 결석 ' + c.absentStreak.length }));
           if (!chips.length && c.latest) chips.push(h('span', { class: 'chip mint', text: '모두 제출' }));
           grid.appendChild(h('a', { class: 'card', href: '#/class/' + enc(c.id) + '/students', style: 'text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:8px' },
             h('div', { class: 'inline', style: 'justify-content:space-between' },
@@ -159,16 +165,17 @@
       box.appendChild(back([[c.academy || '기타', '#/'], [c.name]]));
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' },
         h('div', null, h('h1', { text: c.name }), h('p', { class: 'small muted', text: (c.academy ? c.academy + ' · ' : '') + '학생 ' + c.students + '명 · 숙제 ' + c.lectures + '개 · 테스트 ' + c.tests + '개' })),
-        h('button', { class: 'btn small', type: 'button', onclick: function () { classSheet(c); } }, '반 고치기')));
+        h('div', { class: 'btns' }, c.archived ? h('span', { class: 'chip butter', text: UI.fmtDate(c.archived) + ' 종강' }) : null,
+          h('button', { class: 'btn small', type: 'button', onclick: function () { classSheet(c); } }, '반 고치기'), archiveButton(c))));
       box.appendChild(h('nav', { class: 'tabs', 'aria-label': '반 메뉴' }, TABS.map(function (t) {
         return h('a', { href: '#/class/' + enc(classId) + '/' + t[0], class: t[0] === tab ? 'on' : '', 'aria-current': t[0] === tab ? 'page' : null, text: t[1] });
       })));
       box.appendChild(inner);
-      ({ students: tabStudents, hw: tabHw, tests: tabTests, units: tabUnits, notices: tabNotices, report: tabReport }[tab] || tabStudents)(inner, c);
+      ({ students: tabStudents, attend: tabAttendance, hw: tabHw, tests: tabTests, units: tabUnits, notices: tabNotices, report: tabReport }[tab] || tabStudents)(inner, c);
     });
   }
   function tabStudents(box, c) {
-    loadInto(box, Promise.all([call('admin.students'), call('admin.classReport', { classId: c.id }), S.dash ? Promise.resolve(S.dash) : call('admin.dashboard')]), function (r) {
+    live(box, [['admin.students', {}], ['admin.classReport', { classId: c.id }], ['admin.dashboard', {}]], function (r) {
       var list = r[0].filter(function (s) { return s.classId === c.id; });
       var stat = {};
       r[1].rows.forEach(function (x) { stat[x.key] = x; });
@@ -185,7 +192,8 @@
           : h('span', { class: 'chip ' + (st.missing ? 'butter' : 'mint'), text: '평균 ' + st.avg + (st.missing ? ' · 미제출 ' + st.missing : '') });
         return h('a', { class: 'li', href: '#/student/' + enc(s.key) },
           h('div', null, h('div', { class: 'bold' }, s.name, s.joinedAt ? h('span', { class: 'chip navy', style: 'margin-left:6px;font-size:11px', text: UI.fmtDate(s.joinedAt) + ' 입반' }) : null),
-            h('div', { class: 'small muted', text: s.school + ' ' + s.grade + ' · ' + (s.pinSet ? '비밀번호 학생이 정함' : '임시 비밀번호 ' + s.pin) })), chip);
+            h('div', { class: 'small muted', text: s.school + ' ' + s.grade + ' · ' + (s.pinSet ? '비밀번호 학생이 정함' : '임시 비밀번호 ' + s.pin) })),
+          h('div', { class: 'inline', style: 'gap:6px;flex-wrap:nowrap' }, chip, memoButton(s)));
       })));
       box.appendChild(h('div', { class: 'btns grow' },
         h('button', { class: 'btn primary', type: 'button', onclick: function () { rosterSheet(c); } }, '+ 학생 등록'),
@@ -266,6 +274,8 @@
             var p = a.total ? Math.round(a.correct / a.total * 100) : 0;
             return h('div', { class: 'area-row' }, h('span', { text: a.area }), h('div', { class: 'bar mint' }, h('i', { style: 'width:' + p + '%' })), h('span', { class: 'pct', text: p + '%' }));
           })));
+        colB.appendChild(attendanceCard(rep.attendance));
+        colB.appendChild(notesCard(st, ad.notes));
         colB.appendChild(manageCard(st, ad));
         box.appendChild(h('div', { class: 'cols' }, colA, colB));
       });
@@ -327,10 +337,11 @@
     var box = h('div', { class: 'sec', style: 'gap:14px' });
     page('students', box);
     box.appendChild(h('h1', { text: '학생 찾기' }));
-    var q = h('input', { class: 'input', type: 'search', placeholder: '이름이나 학교로 찾기', 'aria-label': '학생 찾기' });
+    var q = h('input', { class: 'input', type: 'search', placeholder: '이름·학교·메모 내용으로 찾기', 'aria-label': '학생 찾기' });
     var list = h('div');
     box.appendChild(q); box.appendChild(list);
-    loadInto(list, call('admin.students'), function (all) {
+    live(list, [['admin.students', {}]], function (r) {
+      var all = r[0];
       function draw() {
         list.innerHTML = '';
         var t = q.value.trim().replace(/\s+/g, '');
@@ -341,7 +352,26 @@
             h('span', { class: 'chip', text: s.classLabel }));
         })));
       }
-      q.addEventListener('input', draw);
+      var noteBox = h('div', { class: 'sec', style: 'gap:8px;margin-top:14px' }), timer = null;
+      list.parentNode.appendChild(noteBox);
+      q.addEventListener('input', function () {
+        draw();
+        clearTimeout(timer);
+        noteBox.innerHTML = '';
+        var t = q.value.trim();
+        if (t.length < 2) return;
+        timer = setTimeout(function () {
+          call('admin.searchNotes', { q: t }).then(function (hits) {
+            noteBox.innerHTML = '';
+            if (!hits.length) return;
+            noteBox.appendChild(h('div', { class: 'sec-h', text: '메모에서 찾음 ' + hits.length }));
+            noteBox.appendChild(h('div', { class: 'card tight list' }, hits.map(function (n) {
+              return h('a', { class: 'li', href: '#/student/' + enc(n.key) }, h('div', null, h('div', { class: 'bold', text: n.name + ' · ' + n.classLabel }),
+                h('div', { class: 'small muted', text: UI.fmtDate(n.date) + ' · ' + n.text })));
+            })));
+          }, function () { });
+        }, 400);
+      });
       draw();
     });
   }
@@ -357,7 +387,7 @@
       if (defaultClassId) state[defaultClassId] = kind === 'lecture' ? { classId: defaultClassId, date: today, startTime: '' } : kind === 'test' ? { classId: defaultClassId, date: today } : { classId: defaultClassId, from: today, to: '', students: {} };
     }
     var groups = {}, order = [];
-    (S.classes || []).forEach(function (c) { var k = c.academy || '기타'; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(c); });
+    (S.classes || []).filter(function (c) { return !c.archived || (initial || []).some(function (t) { return t.classId === c.id; }); }).forEach(function (c) { var k = c.academy || '기타'; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(c); });
     order.forEach(function (acad) {
       wrap.appendChild(h('div', { class: 'lbl', text: acad }));
       groups[acad].forEach(function (c) { wrap.appendChild(row(c)); });
@@ -436,7 +466,8 @@
 
   // ===================== 숙제 =====================
   function tabHw(box, c) {
-    loadInto(box, call('admin.lectures', { classId: c.id }), function (d) {
+    live(box, [['admin.lectures', { classId: c.id }]], function (r) {
+      var d = r[0];
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('span', { class: 'small muted', text: '숙제 ' + d.list.length + '개 · 날짜순' }),
         h('a', { class: 'btn small primary', href: '#/lecture/new/' + enc(c.id) }, '+ 숙제 만들기')));
       if (!d.list.length) { box.appendChild(h('div', { class: 'card empty', text: '아직 숙제가 없어요.' })); return; }
@@ -472,7 +503,8 @@
       });
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' },
         h('div', null, h('h1', { text: L.title }), h('p', { class: 'small muted', text: UI.fmtDate(L.date) + (L.deadline ? ' · 마감 ' + UI.fmtDT(L.deadline) : '') + ' · ' + L.classLabel })),
-        h('div', { class: 'btns' }, h('a', { class: 'btn small', href: '#/lecture/' + enc(id) + '/' + enc(classId) }, '수정'), regrade, del)));
+        h('div', { class: 'btns' }, h('a', { class: 'btn small', href: '#/lecture/' + enc(id) + '/' + enc(classId) }, '수정'),
+          h('button', { class: 'btn small', type: 'button', onclick: function () { copySheet('lecture', id, L.title, classId); } }, '다른 반에 복사'), regrade, del)));
       box.appendChild(h('div', { class: 'grid2', style: 'grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr))' },
         tile('mint', '제출', sub.length + ' / ' + d.rows.length, miss.length ? '미제출 ' + miss.length + '명' : '모두 냈어요'),
         tile('coral', '평균', sub.length ? Math.round(sub.reduce(function (a, x) { return a + (x.max ? x.score / x.max * 100 : 0); }, 0) / sub.length) + '점' : '–', '처음 낸 답 기준'),
@@ -606,7 +638,20 @@
           h('div', { class: 'inline' }, h('span', { class: 'small' }, '문항 수'), countIn, applyBtn),
           h('div', { class: 'inline', style: 'align-items:flex-start' }, quick, quickBtn),
           h('p', { class: 'tiny muted', text: '객관식 정답이 두 개 이상이면 4+5처럼 써요. 학생도 모두 골라야 정답이에요.' }),
-          h('div', { class: 'btns' }, cropBtn, bulkBtn, bulkIn),
+          h('div', { class: 'btns' }, h('button', { class: 'btn small primary', type: 'button', onclick: function () {
+            fillSheet(qs, function () { countIn.value = String(qs.length); drawQs(); });
+          } }, '정답·영역·해설 한꺼번에 넣기')),
+          h('div', { class: 'btns' }, cropBtn, bulkBtn, bulkIn, h('button', { class: 'btn small', type: 'button', onclick: function () {
+            if (!qs.length) { UI.toast('문항 수부터 정해 주세요.'); return; }
+            Crop.open({ title: '해설 그림 자르기', hint: '해설지 PDF', count: qs.length, onSave: async function (list, progress) {
+              for (var i = 0; i < list.length; i++) {
+                progress(i, list.length);
+                var x = await call('admin.uploadImage', { dataUrl: list[i].dataUrl, filename: 'exp' + list[i].no + '.jpg' });
+                if (qs[list[i].no - 1]) qs[list[i].no - 1].expImage = x.fileId;
+              }
+              drawQs(); UI.toast(list.length + '문항 해설 그림을 붙였어요. 저장을 눌러야 반영돼요.');
+            } });
+          } }, icon('image', 16), '해설지 PDF에서 해설 그림 자르기')),
           h('p', { class: 'tiny muted', text: '한꺼번에 올릴 때는 파일 이름에 문항 번호를 넣어 주세요(예: 01.jpg, 02.jpg).' })),
         qbox));
       root.appendChild(h('div', { class: 'submitbar' }, h('span', { class: 'small muted', text: '저장해야 학생 화면에 반영돼요.' }), save));
@@ -641,7 +686,8 @@
 
   // ===================== 테스트 =====================
   function tabTests(box, c) {
-    loadInto(box, call('admin.tests', { classId: c.id }), function (list) {
+    live(box, [['admin.tests', { classId: c.id }]], function (r) {
+      var list = r[0];
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('span', { class: 'small muted', text: '테스트 ' + list.length + '개' }),
         h('a', { class: 'btn small primary', href: '#/test/new/' + enc(c.id) }, '+ 새 테스트')));
       if (!list.length) { box.appendChild(h('div', { class: 'card empty', text: '아직 테스트가 없어요.' })); return; }
@@ -747,7 +793,8 @@
 
   // ===================== 자료실 (차시) =====================
   function tabUnits(box, c) {
-    loadInto(box, call('admin.units', { classId: c.id }), function (list) {
+    live(box, [['admin.units', { classId: c.id }]], function (r) {
+      var list = r[0];
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('span', { class: 'small muted', text: '차시 ' + list.length + '개 · 영상과 자료를 차시로 묶어 한 번에 공개해요' }),
         h('a', { class: 'btn small primary', href: '#/unit/new/' + enc(c.id) }, '+ 차시 만들기')));
       if (!list.length) { box.appendChild(h('div', { class: 'card empty', text: '아직 차시가 없어요.' })); return; }
@@ -755,7 +802,8 @@
         return h('a', { class: 'row', href: '#/unit/' + enc(u.id) + '/' + enc(c.id) },
           h('div', null, h('div', { class: 't', text: u.title }),
             h('div', { class: 's', text: range(u.from, u.to) + ' · 영상 ' + u.videos + ' · 파일 ' + u.files + (u.overrides ? ' · 학생별 예외 ' + u.overrides + '명' : '') + (u.sharedWith.length ? ' · 같이: ' + u.sharedWith.join(', ') : '') })),
-          h('div', { class: 'chips', style: 'justify-content:flex-end' }, stateChip(u.state), u.files ? h('span', { class: 'chip', text: '받음 ' + u.got + '/' + u.allowed }) : null));
+          h('div', { class: 'chips', style: 'justify-content:flex-end' }, stateChip(u.state), u.files ? h('span', { class: 'chip', text: '받음 ' + u.got + '/' + u.allowed }) : null,
+            u.videos ? h('span', { class: 'chip', text: '시청 ' + (u.viewed || 0) + '/' + u.allowed }) : null));
       })));
     });
   }
@@ -826,7 +874,8 @@
         UI.busy(del, async function () { await call('admin.deleteUnit', { id: id }); location.hash = '#/class/' + enc(classId) + '/units'; }).catch(function () { });
       });
       root.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h1', { text: isNew ? '새 차시' : '차시 수정' }),
-        isNew ? null : h('a', { class: 'btn small', href: '#/log/' + enc(id) + '/' + enc(classId) }, '받은 기록')));
+        isNew ? null : h('div', { class: 'btns' }, h('a', { class: 'btn small', href: '#/log/' + enc(id) + '/' + enc(classId) }, '받은·시청 기록'),
+          h('button', { class: 'btn small', type: 'button', onclick: function () { copySheet('unit', id, U.title, classId); } }, '다른 반에 복사'))));
       root.appendChild(h('section', { class: 'card form' }, field('제목', title), field('설명', memo)));
       root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '영상' }), vbox));
       root.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '수업 자료 파일' }), fbox));
@@ -844,11 +893,12 @@
       if (!d) { box.appendChild(h('div', { class: 'card empty', text: '차시를 찾을 수 없어요.' })); return; }
       box.appendChild(back([[c ? c.name : '반', '#/class/' + enc(classId) + '/units'], [d.title, '#/unit/' + enc(unitId) + '/' + enc(classId)], ['받은 기록']]));
       box.appendChild(h('h1', { text: d.title + ' 받은 기록' }));
-      if (!d.files.length) { box.appendChild(h('div', { class: 'card empty', text: '이 차시에는 파일이 없어요.' })); return; }
+      if (!d.files.length && !d.videos.length) { box.appendChild(h('div', { class: 'card empty', text: '이 차시에는 영상·파일이 없어요.' })); return; }
       box.appendChild(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
-        h('thead', null, h('tr', null, h('th', { class: 'sticky', text: '이름' }), h('th', { text: '볼 수 있음' }), d.files.map(function (f) { return h('th', { text: f.fileName }); }))),
+        h('thead', null, h('tr', null, h('th', { class: 'sticky', text: '이름' }), h('th', { text: '볼 수 있음' }), d.videos.map(function (v) { return h('th', { text: '▶ ' + v.label }); }), d.files.map(function (f) { return h('th', { text: f.fileName }); }))),
         h('tbody', null, d.rows.map(function (x) {
           return h('tr', null, h('td', { class: 'sticky bold', text: x.name }), h('td', { text: x.allowed ? '예' : '아니요' }),
+            x.videos.map(function (v) { return h('td', { class: 'small', text: v.count ? UI.fmtDT(v.first) + (v.count > 1 ? ' 외 ' + (v.count - 1) + '번' : '') : '–' }); }),
             x.files.map(function (f) { return h('td', { class: 'small', text: f.count ? UI.fmtDT(f.first) + (f.count > 1 ? ' 외 ' + (f.count - 1) + '번' : '') : '–' }); }));
         })))));
     });
@@ -856,7 +906,8 @@
 
   // ===================== 공지 =====================
   function tabNotices(box, c) {
-    loadInto(box, call('admin.notices', { classId: c.id }), function (list) {
+    live(box, [['admin.notices', { classId: c.id }]], function (r) {
+      var list = r[0];
       box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('span', { class: 'small muted', text: '공지 ' + list.length + '개 · 학생 홈 맨 위에 떠요' }),
         h('a', { class: 'btn small primary', href: '#/notice/new/' + enc(c.id) }, '+ 공지 쓰기')));
       if (!list.length) { box.appendChild(h('div', { class: 'card empty', text: '아직 공지가 없어요.' })); return; }
@@ -907,12 +958,14 @@
 
   // ===================== 반 리포트 =====================
   function tabReport(box, c) {
-    loadInto(box, call('admin.classReport', { classId: c.id }), function (d) {
+    live(box, [['admin.classReport', { classId: c.id }]], function (r) {
+      var d = r[0];
       box.appendChild(h('div', { class: 'sec-h', text: '학생별 (평균 높은 순)' }));
       box.appendChild(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
-        h('thead', null, h('tr', null, [['이름', 'sticky'], ['낸 숙제', 'num'], ['미제출', 'num'], ['평균', 'num'], ['최근', 'num']].map(function (t) { return h('th', { class: t[1], text: t[0] }); }))),
+        h('thead', null, h('tr', null, [['이름', 'sticky'], ['출석률', 'num'], ['낸 숙제', 'num'], ['미제출', 'num'], ['평균', 'num'], ['최근', 'num']].map(function (t) { return h('th', { class: t[1], text: t[0] }); }))),
         h('tbody', null, d.rows.map(function (x) {
           return h('tr', null, h('td', { class: 'sticky bold' }, h('a', { href: '#/student/' + enc(x.key), text: x.name, style: 'color:inherit' })),
+            h('td', { class: 'num', text: x.att == null ? '–' : x.att + '%' }),
             h('td', { class: 'num', text: String(x.done) }), h('td', { class: 'num', text: x.missing ? String(x.missing) : '–', style: x.missing ? 'color:var(--coral-ink);font-weight:700' : '' }),
             h('td', { class: 'num', text: x.avg == null ? '–' : x.avg + '점' }), h('td', { class: 'num', text: x.last == null ? '–' : x.last + '점' }));
         })))));
@@ -936,7 +989,8 @@
       var cl = r[0], site = r[1];
       // 반 관리
       var groups = {}, order = [];
-      cl.forEach(function (c) { var k = c.academy || '기타'; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(c); });
+      var archived = cl.filter(function (c) { return c.archived; });
+      cl.filter(function (c) { return !c.archived; }).forEach(function (c) { var k = c.academy || '기타'; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(c); });
       var cbox = h('section', { class: 'card sec', style: 'gap:10px' }, h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h3', { text: '학원 · 반' }),
         h('button', { class: 'btn small', type: 'button', onclick: function () { classSheet(null); } }, '+ 반 만들기')));
       order.forEach(function (a) {
@@ -949,10 +1003,20 @@
           });
           cbox.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between;border-bottom:1px solid var(--line2);padding-bottom:8px' },
             h('span', null, h('b', { text: c.name }), h('span', { class: 'small muted', text: ' · 학생 ' + c.students + ' · 숙제 ' + c.lectures + ' · 테스트 ' + c.tests })),
-            h('div', { class: 'inline' }, h('button', { class: 'btn small', type: 'button', onclick: function () { classSheet(c); } }, '고치기'), del)));
+            h('div', { class: 'inline' }, h('a', { class: 'btn small', href: '#/class/' + enc(c.id) + '/students' }, '열기'),
+              h('button', { class: 'btn small', type: 'button', onclick: function () { classSheet(c); } }, '고치기'), archiveButton(c), del)));
         });
       });
       inner.appendChild(cbox);
+      if (archived.length) inner.appendChild(h('section', { class: 'card sec', style: 'gap:10px' }, h('h3', { text: '종강한 반 ' + archived.length }),
+        h('p', { class: 'tiny muted', text: '기록은 모두 남아 있어요. 종강 후 1주가 지나면 학생 화면의 영상·자료가 닫혀요.' }),
+        archived.map(function (c) {
+          return h('div', { class: 'inline', style: 'justify-content:space-between;border-bottom:1px solid var(--line2);padding-bottom:8px' },
+            h('span', null, h('b', { text: c.label }), h('span', { class: 'small muted', text: ' · ' + UI.fmtDate(c.archived) + ' 종강 · 학생 ' + c.students })),
+            h('div', { class: 'inline' }, h('a', { class: 'btn small', href: '#/class/' + enc(c.id) + '/students' }, '열기'), archiveButton(c)));
+        })));
+      inner.appendChild(h('section', { class: 'card sec', style: 'gap:6px' }, h('h3', { text: '자동 백업' }),
+        h('p', { class: 'small', text: site.lastBackup ? '마지막 백업: ' + UI.fmtDT(site.lastBackup) + ' · 매주 월요일 새벽에 드라이브 "백업" 폴더에 시트 사본이 생겨요(최근 8주).' : '아직 백업 기록이 없어요. Apps Script 편집기에서 setupBackup을 한 번 실행하면 매주 자동으로 백업돼요.' })));
       // 비밀번호
       var cur = h('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
       var n1 = h('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
@@ -978,6 +1042,315 @@
         h('div', null, swBtn)));
       inner.appendChild(h('div', { class: 'btns' }, h('button', { class: 'btn', type: 'button', onclick: logout }, icon('out', 16), '로그아웃'), UI.themeButton()));
     });
+  }
+
+  // ===================== 2차: 오늘 할 일 · 종강 · 메모 · 출석 · 복사 · 한꺼번에 넣기 · 질문함 =====================
+  function todoCard(d) {
+    var t = d.todo || { lectures: [], reminders: [], absent: [], questions: 0, essay: 0 };
+    var rows = [];
+    t.lectures.forEach(function (l) {
+      rows.push(h('a', { class: 'li', href: '#/class/' + enc(l.classId) + '/attend' },
+        h('div', null, h('div', { class: 'bold', text: (l.startTime ? l.startTime + ' ' : '') + l.className }), h('div', { class: 'small muted', text: '오늘 수업 · ' + l.title })),
+        h('span', { class: 'chip', text: '출석 체크' })));
+    });
+    if (t.absent.length) rows.push(h('div', { class: 'li' }, h('div', null, h('div', { class: 'bold', text: '오늘 결석 ' + t.absent.length + '명' }),
+      h('div', { class: 'small muted', text: t.absent.map(function (a) { return a.name; }).join(', ') })),
+      h('button', { class: 'btn small', type: 'button', onclick: function () { copyText(t.absent.map(function (a) { return a.name + '(' + a.classLabel + ')'; }).join(', '), '결석 명단을 복사했어요.'); } }, '복사')));
+    t.reminders.forEach(function (r) {
+      rows.push(h('a', { class: 'li', href: '#/student/' + enc(r.key) }, h('div', null, h('div', { class: 'bold', text: '상담 · ' + r.name }), h('div', { class: 'small muted', text: r.text })),
+        h('span', { class: 'chip coral', text: UI.fmtDate(r.remindAt) })));
+    });
+    if (t.questions) rows.push(h('a', { class: 'li', href: '#/questions' }, h('div', { class: 'bold', text: '답 기다리는 질문 ' + t.questions + '개' }), icon('right', 16)));
+    if (t.essay) rows.push(h('div', { class: 'li' }, h('div', { class: 'bold', text: '서술형 채점 ' + t.essay + '건' }), h('span', { class: 'small muted', text: '반 카드에서 확인' })));
+    return h('section', { class: 'card sec', style: 'gap:4px' }, h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h3', { text: '오늘 할 일' }), h('span', { class: 'small muted', text: UI.fmtDate(d.today) })),
+      rows.length ? h('div', { class: 'list' }, rows) : h('p', { class: 'small muted', style: 'padding:6px 0', text: '오늘 챙길 일이 없어요.' }));
+  }
+  function archiveButton(c) {
+    var b = h('button', { class: 'btn small', type: 'button' }, c.archived ? '다시 열기' : '종강');
+    b.addEventListener('click', async function (e) {
+      e.preventDefault();
+      var msg = c.archived ? c.name + ' 반을 다시 열까요? 강사 홈과 반 목록에 다시 보여요.'
+        : c.name + ' 반을 종강할까요?\n· 강사 홈과 반 고르는 목록에서 빠져요.\n· 숙제·점수·출석·메모 기록은 모두 남아요.\n· 학생은 종강 후 1주 동안만 영상·자료를 볼 수 있어요.\n· 설정에서 언제든 다시 열 수 있어요.';
+      if (!(await UI.confirm(msg, c.archived ? '다시 열기' : '종강'))) return;
+      UI.busy(b, async function () { await call('admin.archiveClass', { id: c.id, archived: !c.archived }); S.classes = null; API.clearCache(ROLE); UI.toast(c.archived ? '다시 열었어요.' : '종강했어요.'); route(); }).catch(function () { });
+    });
+    return b;
+  }
+
+  // ---------- 강사 전용 메모 ----------
+  var TAGS = ['상담', '학부모 통화', '수업 태도', '진도', '기타'];
+  function noteSheet(key, name, note, onSaved) {
+    note = note || {};
+    var date = h('input', { class: 'input sm', type: 'date', value: note.date || UI.todayStr(), 'aria-label': '날짜' });
+    var tag = h('select', { class: 'input sm', 'aria-label': '종류' }, TAGS.map(function (t) { return h('option', { value: t, selected: (note.tag || '상담') === t, text: t }); }));
+    var text = h('textarea', { class: 'input', text: note.text || '', placeholder: '상담 내용, 기억할 점 (선생님만 볼 수 있어요)' });
+    var pinned = h('input', { type: 'checkbox', checked: !!note.pinned });
+    var remind = h('input', { class: 'input sm', type: 'date', value: note.remindAt || '', 'aria-label': '다음 상담일' });
+    var done = h('input', { type: 'checkbox', checked: !!note.done });
+    var save = h('button', { class: 'btn primary', type: 'submit' }, '저장');
+    var del = note.id ? h('button', { class: 'btn danger', type: 'button' }, '삭제') : null;
+    var sh = UI.sheet(name + ' 메모', h('form', { class: 'form', onsubmit: function (e) {
+      e.preventDefault();
+      UI.busy(save, async function () {
+        var list = await call('admin.saveNote', { id: note.id || '', key: key, date: date.value, tag: tag.value, text: text.value, pinned: pinned.checked, remindAt: remind.value, done: done.checked });
+        sh.close(); UI.toast('메모를 저장했어요.'); if (onSaved) onSaved(list);
+      }).catch(function () { });
+    } },
+      h('div', { class: 'inline' }, date, tag), text,
+      h('label', { class: 'check' }, pinned, '맨 위에 고정 (늘 기억할 내용)'),
+      h('div', { class: 'inline' }, h('span', { class: 'lbl', text: '다음 상담일' }), remind, note.id ? h('label', { class: 'check small' }, done, '상담 끝남') : null),
+      h('p', { class: 'tiny muted', text: '다음 상담일을 넣으면 그날 강사 홈 "오늘 할 일"에 떠요. 학생·학부모 화면에는 절대 안 보여요.' }),
+      h('div', { class: 'btns grow' }, del, save)));
+    if (del) del.addEventListener('click', async function () {
+      if (!(await UI.confirm('이 메모를 지울까요?', '삭제', true))) return;
+      UI.busy(del, async function () { var list = await call('admin.deleteNote', { id: note.id }); sh.close(); if (onSaved) onSaved(list); }).catch(function () { });
+    });
+  }
+  function memoButton(s) {
+    return h('button', { class: 'iconbtn', type: 'button', style: 'width:32px;height:32px', 'aria-label': s.name + ' 메모 쓰기', title: '빠른 메모', onclick: function (e) {
+      e.preventDefault(); e.stopPropagation(); noteSheet(s.key, s.name, null, null);
+    } }, icon('note', 16));
+  }
+  function notesCard(st, notes) {
+    var card = h('section', { class: 'card sec', style: 'gap:10px' });
+    function draw(list) {
+      card.innerHTML = '';
+      card.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h3', { text: '상담·메모 (선생님만)' }),
+        h('button', { class: 'btn small', type: 'button', onclick: function () { noteSheet(st.key, st.name, null, draw); } }, '+ 메모')));
+      if (!list.length) { card.appendChild(h('p', { class: 'small muted', text: '아직 메모가 없어요.' })); return; }
+      list.forEach(function (n) {
+        card.appendChild(h('button', { type: 'button', class: 'notebox' + (n.pinned ? ' pinned' : ''), onclick: function () { noteSheet(st.key, st.name, n, draw); } },
+          h('div', { class: 'chips' }, n.pinned ? h('span', { class: 'chip butter', text: '고정' }) : null, h('span', { class: 'chip', text: n.tag }),
+            h('span', { class: 'tiny muted', text: UI.fmtDate(n.date) }),
+            n.remindAt && !n.done ? h('span', { class: 'chip coral', text: '상담 예정 ' + UI.fmtDate(n.remindAt) }) : null),
+          h('p', { class: 'small', style: 'white-space:pre-wrap;margin-top:4px', text: n.text })));
+      });
+    }
+    draw(notes || []);
+    return card;
+  }
+  function attendanceCard(a) {
+    if (!a) return null;
+    return h('section', { class: 'card sec', style: 'gap:8px' }, h('h3', { text: '이번 달 출석' }),
+      a.total ? h('div', { class: 'chips' }, h('span', { class: 'chip mint', text: '출석 ' + a.present }), h('span', { class: 'chip butter', text: '지각 ' + a.late }),
+        h('span', { class: 'chip coral', text: '결석 ' + a.absent }), h('span', { class: 'chip lav', text: '조퇴 ' + a.early }), h('span', { class: 'chip', text: '출석률 ' + a.rate + '%' }))
+        : h('p', { class: 'small muted', text: '이번 달 출석 기록이 없어요.' }),
+      a.list.map(function (x) { return h('p', { class: 'small', text: UI.fmtDate(x.date) + ' ' + x.label + (x.note ? ' · ' + x.note : '') }); }));
+  }
+
+  // ---------- 다른 반·다음 기수로 복사 ----------
+  function copySheet(kind, id, title, classId) {
+    var t = h('input', { class: 'input', value: title });
+    var targets = targetEditor(kind === 'lecture' ? 'lecture' : 'unit', [], null);
+    var b = h('button', { class: 'btn primary', type: 'button' }, '복사하기');
+    var sh = UI.sheet(kind === 'lecture' ? '숙제 복사' : '차시 복사', h('div', { class: 'form' },
+      h('p', { class: 'small muted', text: kind === 'lecture' ? '정답·영역·해설·문제 사진이 모두 복사돼요. 제출 기록은 새로 시작해요.' : '영상·파일·설명이 모두 복사돼요.' }),
+      field('제목', t), h('div', { class: 'lbl', text: '어느 반에, 언제' }), targets.el, b));
+    b.addEventListener('click', function () {
+      UI.busy(b, async function () {
+        var tg = targets.get();
+        if (!tg.length) throw new Error('복사할 반을 골라 주세요.');
+        var r = await call(kind === 'lecture' ? 'admin.copyLecture' : 'admin.copyUnit', { id: id, title: t.value, targets: tg });
+        sh.close(); UI.toast('복사했어요.'); S.classes = null;
+        location.hash = kind === 'lecture' ? '#/status/' + enc(r.id) + '/' + enc(tg[0].classId) : '#/unit/' + enc(r.id) + '/' + enc(tg[0].classId);
+      }).catch(function (e) { if (e && e.message && !e.code) UI.toast(e.message); });
+    });
+  }
+
+  // ---------- 정답·영역·해설 한꺼번에 넣기 ----------
+  function parseAreas(text) {
+    var parts = text.split(/\n|;|\/|,(?=\s*\d)/).map(function (x) { return x.trim(); }).filter(Boolean), out = {}, ranged = false;
+    parts.forEach(function (l) {
+      var m = l.match(/^(\d{1,3})\s*(?:[-~–]\s*(\d{1,3}))?\s*번?\s*[.:)]?\s+(.+)$/);
+      if (m) { ranged = true; for (var i = Number(m[1]); i <= Number(m[2] || m[1]); i++) out[i] = m[3].trim(); }
+    });
+    if (!ranged) parts.forEach(function (l, i) { out[i + 1] = l; });
+    return out;
+  }
+  function parseExps(text) {
+    var out = {}, cur = null, found = false;
+    text.split(/\n/).forEach(function (line) {
+      var m = line.match(/^\s*(\d{1,3})\s*(?:번|[.)]|:)\s*(.*)$/);
+      if (m) { found = true; cur = Number(m[1]); out[cur] = m[2]; }
+      else if (cur != null) out[cur] += (out[cur] ? '\n' : '') + line;
+    });
+    if (!found) text.split(/\n\s*\n/).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (x, i) { out[i + 1] = x; });
+    Object.keys(out).forEach(function (k) { out[k] = String(out[k]).trim(); });
+    return out;
+  }
+  function fillSheet(qs, done) {
+    var ans = h('textarea', { class: 'input', placeholder: '순서대로 띄어 쓰기\n예: 3 4+5 렌츠 2 1', style: 'min-height:60px' });
+    var area = h('textarea', { class: 'input', placeholder: '번호 범위로: 1-4 산화적 인산화, 5-8 ATP 수지\n또는 한 줄에 하나씩 순서대로', style: 'min-height:70px' });
+    var exp = h('textarea', { class: 'input', placeholder: '번호를 붙여 통째로 붙여 넣기\n1. 해설 내용…\n2. 해설 내용…', style: 'min-height:110px' });
+    var table = h('textarea', { class: 'input', placeholder: '엑셀·한글 표를 복사해 붙여 넣기\n(번호 · 정답 · 영역 · 해설 순서, 번호 칸은 없어도 돼요)', style: 'min-height:80px' });
+    var b = h('button', { class: 'btn primary', type: 'button' }, '채우기');
+    function q(i) { while (qs.length < i) qs.push({ type: 'mcq', answer: '', area: '', points: 1, expText: '', expImage: '', qImage: '' }); return qs[i - 1]; }
+    function setAns(x, a) { a = String(a).trim(); if (!a) return; x.answer = a; x.type = /^[1-5]([+,][1-5])*$/.test(a) ? 'mcq' : (x.type === 'essay' ? 'essay' : 'short'); if (x.type === 'mcq') x.answer = a.replace(/,/g, '+'); }
+    var sh = UI.sheet('정답·영역·해설 한꺼번에 넣기', h('div', { class: 'form' },
+      field('정답', ans), field('출제 영역', area, '같은 영역이 이어지면 "1-4 산화적 인산화"처럼 범위로 쓰면 편해요.'),
+      field('해설 글', exp, '한글 해설지에서 번호 붙은 해설을 통째로 복사해 붙이면 번호대로 나눠 들어가요.'),
+      field('표로 한 번에', table), h('p', { class: 'tiny muted', text: '빈 칸은 건드리지 않아요. 넣은 것만 바뀌어요.' }), b));
+    b.addEventListener('click', function () {
+      var n = 0;
+      ans.value.trim().split(/[\s,]+/).filter(Boolean).forEach(function (a, i) { setAns(q(i + 1), a); n++; });
+      var ar = parseAreas(area.value); Object.keys(ar).forEach(function (k) { q(Number(k)).area = ar[k]; n++; });
+      var ex = parseExps(exp.value); Object.keys(ex).forEach(function (k) { if (ex[k]) { q(Number(k)).expText = ex[k]; n++; } });
+      var idx = 0;
+      table.value.split(/\n/).forEach(function (line) {
+        if (!line.trim()) return;
+        var cells = line.split('\t').map(function (c) { return c.trim(); });
+        if (cells.some(function (c) { return /^(번호|문항|정답|영역|해설)$/.test(c); })) return; // 머리글 줄 건너뛰기
+        var no;
+        if (/^\d{1,3}$/.test(cells[0]) && cells.length > 1) no = Number(cells.shift()); else no = ++idx;
+        idx = no;
+        var x = q(no);
+        if (cells[0]) setAns(x, cells[0]);
+        if (cells[1]) x.area = cells[1];
+        if (cells[2]) x.expText = cells.slice(2).join(' ');
+        n++;
+      });
+      sh.close(); done(); UI.toast(n ? '채웠어요. 저장을 눌러야 반영돼요.' : '넣은 내용이 없어요.');
+    });
+  }
+
+  // ---------- 출석부 ----------
+  var ATT = [['O', '출석', 'mint'], ['L', '지각', 'butter'], ['A', '결석', 'coral'], ['E', '조퇴', 'lav']];
+  function tabAttendance(box, c) {
+    S.attDate = S.attDate || {};
+    var date = S.attDate[c.id] || UI.todayStr();
+    function load() {
+      box.innerHTML = '';
+      loadInto(box, call('admin.attendance', { classId: c.id, date: date }), function (d) {
+        date = d.date; S.attDate[c.id] = date;
+        var rows = d.students.map(function (s) { return { key: s.key, name: s.name, status: s.status, note: s.note, by: s.by, joinedAt: s.joinedAt }; });
+        var dsel = h('select', { class: 'input sm', style: 'width:auto;flex:0 0 auto', 'aria-label': '날짜', onchange: function (e) { date = e.target.value; load(); } },
+          d.dates.map(function (x) { return h('option', { value: x, selected: x === date, text: UI.fmtDate(x) + (x === UI.todayStr() ? ' 오늘' : '') }); }));
+        var dpick = h('input', { class: 'input sm', type: 'date', value: date, style: 'width:auto;flex:0 0 auto', 'aria-label': '다른 날짜', onchange: function (e) { if (e.target.value) { date = e.target.value; load(); } } });
+        var qrBtn = h('button', { class: 'btn small', type: 'button', onclick: function () { checkinModal(c, load); } }, icon('qr', 16), 'QR 출석 띄우기');
+        var summary = h('div', { class: 'chips' });
+        function drawSummary() {
+          summary.innerHTML = '';
+          ATT.forEach(function (a) { summary.appendChild(h('span', { class: 'chip ' + a[2], text: a[1] + ' ' + rows.filter(function (r) { return r.status === a[0]; }).length })); });
+          var none = rows.filter(function (r) { return !r.status; }).length;
+          if (none) summary.appendChild(h('span', { class: 'chip', text: '미체크 ' + none }));
+        }
+        var list = h('section', { class: 'card tight list' });
+        function drawRows() {
+          list.innerHTML = '';
+          if (!rows.length) { list.appendChild(h('p', { class: 'empty', text: '이 반에 학생이 없어요.' })); return; }
+          rows.forEach(function (r) {
+            var note = h('input', { class: 'input sm', value: r.note || '', placeholder: '사유 (선생님만 봐요)', 'aria-label': r.name + ' 사유', oninput: function (e) { r.note = e.target.value; } });
+            var btns = h('div', { class: 'att', role: 'group', 'aria-label': r.name + ' 출결' }, ATT.map(function (a) {
+              return h('button', { type: 'button', class: (r.status === a[0] ? 'on ' + a[2] : ''), 'aria-pressed': r.status === a[0] ? 'true' : 'false', text: a[1], onclick: function () {
+                r.status = r.status === a[0] ? '' : a[0]; drawRows(); drawSummary();
+              } });
+            }));
+            var extra = [];
+            if (r.status && r.status !== 'O') extra.push(note);
+            if (r.status === 'A' && d.units.length) {
+              var us = h('select', { class: 'input sm', style: 'width:auto;max-width:200px', 'aria-label': r.name + ' 보강 차시' }, h('option', { value: '', text: '보강 영상 열기…' }),
+                d.units.map(function (u) { return h('option', { value: u.id, text: u.title }); }));
+              us.addEventListener('change', function () {
+                if (!us.value) return;
+                call('admin.makeup', { unitId: us.value, classId: c.id, key: r.key }).then(function () { UI.toast(r.name + '에게 열었어요.'); }, function (e) { UI.toast(e.message); });
+              });
+              extra.push(us);
+            }
+            list.appendChild(h('div', { class: 'li', style: 'flex-wrap:wrap' },
+              h('div', { style: 'min-width:90px' }, h('div', { class: 'bold' }, r.name, r.by === 'qr' ? h('span', { class: 'chip navy', style: 'margin-left:6px;font-size:10.5px', text: 'QR' }) : null)),
+              h('div', { class: 'inline', style: 'gap:6px;justify-content:flex-end;flex:1' }, btns, memoButton(r)),
+              extra.length ? h('div', { class: 'inline', style: 'width:100%;justify-content:flex-end' }, extra) : null));
+          });
+        }
+        var journal = h('textarea', { class: 'input', text: d.journal, placeholder: '오늘 수업에서 한 것 (학생·학부모에게 보여요)\n예: 산화적 인산화 개념, 교재 12~18쪽', style: 'min-height:70px' });
+        var save = h('button', { class: 'btn primary', type: 'button' }, '저장');
+        save.addEventListener('click', function () {
+          UI.busy(save, async function () {
+            await call('admin.saveAttendance', { classId: c.id, date: date, rows: rows.map(function (r) { return { key: r.key, status: r.status, note: r.note }; }), journal: journal.value });
+            UI.toast('출석과 수업 일지를 저장했어요.');
+          }).catch(function () { });
+        });
+        box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('div', { class: 'inline' }, dsel, dpick), qrBtn));
+        if (d.lecture) box.appendChild(h('p', { class: 'small muted', text: '이날 숙제: ' + d.lecture.title + (d.lecture.startTime ? ' · 수업 시작 ' + d.lecture.startTime : '') }));
+        box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, summary,
+          h('button', { class: 'btn small', type: 'button', onclick: function () { rows.forEach(function (r) { if (!r.status) r.status = 'O'; }); drawRows(); drawSummary(); } }, '나머지 모두 출석')));
+        box.appendChild(list);
+        box.appendChild(h('section', { class: 'card sec', style: 'gap:8px' }, h('h3', { text: '수업 일지' }), journal));
+        box.appendChild(h('div', { class: 'submitbar' },
+          h('button', { class: 'btn small', type: 'button', onclick: function () {
+            var abs = rows.filter(function (r) { return r.status === 'A'; }).map(function (r) { return r.name; });
+            if (!abs.length) { UI.toast('결석한 학생이 없어요.'); return; }
+            copyText(UI.fmtDate(date) + ' ' + c.name + ' 결석: ' + abs.join(', '), '결석 명단을 복사했어요.');
+          } }, '결석 명단 복사'), save));
+        drawRows(); drawSummary();
+      });
+    }
+    load();
+  }
+  async function checkinModal(c, onClose) {
+    var body = h('div', { class: 'sec', style: 'gap:12px;align-items:center;text-align:center' }, UI.loading('QR을 만드는 중…'));
+    var timers = [];
+    var sh = UI.sheet(c.name + ' QR 출석', body, { wide: true, sticky: true, noFocus: true, onClose: function () { timers.forEach(clearInterval); onClose(); } });
+    try {
+      var info = await call('admin.startCheckin', { classId: c.id });
+      await UI.loadScript('/js/qrcode.js?v=3');
+      var url = location.origin + '/#/checkin/' + info.code;
+      var qr = window.qrcode(0, 'M');
+      qr.addData(url); qr.make();
+      var qrBox = h('div', { class: 'qrbox', 'aria-label': '출석 QR 코드' }, h('img', { src: qr.createDataURL(10, 2), alt: '출석 QR 코드' }));
+      body.innerHTML = '';
+      body.appendChild(qrBox);
+      var left = h('span', { class: 'bold' });
+      var who = h('p', { class: 'small muted' });
+      body.appendChild(h('div', null, h('div', { style: 'font-size:28px;font-weight:800;letter-spacing:.2em', text: info.code }),
+        h('p', { class: 'small muted', text: '카메라로 QR을 찍으면 로그인된 학생은 바로 출석돼요.' + (info.startTime ? ' ' + info.startTime + ' 5분 뒤부터는 지각이에요.' : '') })));
+      var countEl = h('div', { class: 'big' });
+      body.appendChild(countEl); body.appendChild(who); body.appendChild(left);
+      var stop = h('button', { class: 'btn', type: 'button' }, 'QR 닫기');
+      stop.addEventListener('click', function () { call('admin.stopCheckin', { classId: c.id }).catch(function () { }); sh.close(); });
+      body.appendChild(stop);
+      function tick() { var s = Math.max(0, Math.round((info.exp - Date.now()) / 1000)); left.textContent = '남은 시간 ' + Math.floor(s / 60) + '분 ' + (s % 60) + '초'; if (!s) sh.close(); }
+      function poll() {
+        call('admin.attendance', { classId: c.id, date: info.date }).then(function (d) {
+          var inn = d.students.filter(function (s) { return s.status === 'O' || s.status === 'L'; });
+          countEl.textContent = inn.length + ' / ' + d.students.length + '명 출석';
+          who.textContent = inn.map(function (s) { return s.name + (s.status === 'L' ? '(지각)' : ''); }).join(', ');
+        }, function () { });
+      }
+      tick(); poll();
+      timers.push(setInterval(tick, 1000), setInterval(poll, 8000));
+    } catch (e) { body.innerHTML = ''; body.appendChild(h('p', { class: 'err', text: e.message })); }
+  }
+
+  // ---------- 질문함 ----------
+  function viewQuestions() {
+    var box = h('div', { class: 'sec', style: 'gap:14px;max-width:860px' });
+    page('questions', box);
+    var all = false;
+    box.appendChild(h('div', { class: 'inline', style: 'justify-content:space-between' }, h('h1', { text: '질문함' }),
+      h('label', { class: 'check small' }, h('input', { type: 'checkbox', onchange: function (e) { all = e.target.checked; load(); } }), '답한 질문도 보기')));
+    var inner = h('div', { class: 'sec', style: 'gap:12px' });
+    box.appendChild(inner);
+    function load() {
+      inner.innerHTML = '';
+      loadInto(inner, call('admin.questions', { all: all }), function (list) {
+        if (!list.length) { inner.appendChild(h('div', { class: 'card empty', text: all ? '아직 질문이 없어요.' : '답을 기다리는 질문이 없어요.' })); return; }
+        list.forEach(function (q) {
+          var ta = h('textarea', { class: 'input', text: q.answer, placeholder: '답변 (학생에게 보여요)', style: 'min-height:70px' });
+          var b = h('button', { class: 'btn small primary', type: 'button' }, q.answer ? '답변 고치기' : '답변 보내기');
+          b.addEventListener('click', function () { UI.busy(b, async function () { await call('admin.answerQuestion', { id: q.id, answer: ta.value }); UI.toast(q.name + '에게 답했어요.'); load(); }).catch(function () { }); });
+          var close = h('button', { class: 'btn small', type: 'button' }, '답 없이 닫기');
+          close.addEventListener('click', function () { UI.busy(close, async function () { await call('admin.answerQuestion', { id: q.id, answer: '', close: true }); load(); }).catch(function () { }); });
+          inner.appendChild(h('article', { class: 'card sec', style: 'gap:8px' },
+            h('div', { class: 'inline', style: 'justify-content:space-between' },
+              h('div', null, h('a', { href: '#/student/' + enc(q.key), class: 'bold', style: 'color:inherit', text: q.name }), h('span', { class: 'small muted', text: ' · ' + q.classLabel })),
+              h('span', { class: 'chip ' + (q.status === 'open' ? 'butter' : q.status === 'answered' ? 'mint' : ''), text: q.status === 'open' ? '기다리는 중' : q.status === 'answered' ? '답함' : '닫음' })),
+            h('p', { class: 'small muted', text: (q.src === 'test' ? '테스트 · ' : '숙제 · ') + q.title + ' · ' + q.no + '번 · ' + UI.fmtDT(q.askedAt) }),
+            h('div', { class: 'exp', text: q.text }), ta, h('div', { class: 'btns' }, b, q.status === 'open' ? close : null)));
+        });
+      });
+    }
+    load();
   }
 
   route();

@@ -79,7 +79,7 @@
   // opts: { count, onSave: async (list[{no, dataUrl}], progress) }
   function open(opts) {
     var pages = [], sel = null, drawMode = false;
-    var status = h('p', { class: 'small muted', text: '숙제 PDF를 고르면 문항 번호를 찾아서 네모를 미리 그려 줘요.' });
+    var status = h('p', { class: 'small muted', text: (opts.hint || '숙제 PDF') + '를 고르면 문항 번호를 찾아서 네모를 미리 그려 줘요.' });
     var fileIn = h('input', { type: 'file', accept: 'application/pdf', class: 'input' });
     var startIn = h('input', { type: 'number', class: 'input sm', value: '1', min: '1', style: 'width:70px', 'aria-label': '시작 번호' });
     var area = h('div');
@@ -96,7 +96,7 @@
       h('div', { class: 'inline' }, fileIn, h('label', { class: 'small muted' }, '시작 번호 ', startIn),
         h('button', { class: 'btn small', type: 'button', onclick: function () { if (pages.length) { var n = detect(pages, opts.count, Number(startIn.value) || 1); sel = null; drawAll(); status.textContent = n + '개를 찾았어요.'; } } }, '다시 찾기')),
       status, toolbar, area);
-    var sh = UI.sheet('문제 사진 자르기', body, { wide: true, sticky: true, noFocus: true });
+    var sh = UI.sheet(opts.title || '문제 사진 자르기', body, { wide: true, sticky: true, noFocus: true });
 
     function boxesCount() { return pages.reduce(function (a, p) { return a + p.boxes.length; }, 0); }
     function missing() {
