@@ -316,6 +316,7 @@
           img: function () { return call('student.questionImage', { id: v.id, no: q.no }); } };
       }),
       confused: mode === 'first',
+      forceShow: mode === 'retry', // 재풀이는 틀린 문제라 사진을 보여 줌
       submitLabel: mode === 'retry' ? '재풀이 내기' : '제출하기',
       confirmMsg: function (left) {
         var msg = left ? '아직 안 푼 문항이 ' + left + '개 있어요. 그래도 낼까요?' : (mode === 'retry' ? '재풀이를 낼까요? 내면 정답과 해설이 열려요.' : '제출할까요?');
@@ -332,13 +333,30 @@
   }
   // OMR처럼 한 문항씩: 객관식은 고르면 자동으로 다음, 단답·서술은 "다음"(Enter). 마지막엔 답안 확인 → 제출
   // cfg: { items:[{key, short, label, sub?, type, pick, hasQ, img()}], confused, submitLabel, confirmMsg(left), submit(answers, confusedKeys) }
+  // 보기 방식: one = 한 문제씩(사진 보임), sheet = 한 화면 빠른 입력(사진 숨김, 필요한 문제만 펼쳐 봄)
+  function getSolveMode() { try { return localStorage.getItem('msl_solve_mode') === 'sheet' ? 'sheet' : 'one'; } catch (e) { return 'one'; } }
+  function setSolveMode(m) { try { localStorage.setItem('msl_solve_mode', m); } catch (e) { } }
   function omr(cfg) {
     var qs = cfg.items;
     var answers = {}, confused = {}, idx = 0, imgs = {}, timer = null;
+    var anyQ = qs.some(function (q) { return q.hasQ; });
+    var mode = cfg.forceShow ? 'one' : getSolveMode();
     var wrap = h('div', { class: 'sec', style: 'gap:12px' });
+    var seg = h('div', { class: 'seg solve-seg', role: 'tablist', 'aria-label': '보기 방식' });
+    function drawSeg() {
+      seg.innerHTML = '';
+      [['one', anyQ ? '한 문제씩 · 사진 보기' : '한 문제씩'], ['sheet', anyQ ? '한 화면 입력 · 사진 숨김' : '한 화면 빠른 입력']].forEach(function (o) {
+        seg.appendChild(h('button', { type: 'button', role: 'tab', class: mode === o[0] ? 'on' : '', 'aria-selected': mode === o[0] ? 'true' : 'false', onclick: function () {
+          if (mode === o[0]) return;
+          mode = o[0]; if (!cfg.forceShow) setSolveMode(mode);
+          drawSeg(); go(mode === 'one' ? Math.min(idx, qs.length - 1) : idx);
+        } }, o[1]));
+      });
+    }
+    drawSeg();
     var strip = h('div', { class: 'strip', role: 'tablist', 'aria-label': '문항 번호' });
     var stage = h('div', { class: 'sec', style: 'gap:12px' });
-    wrap.appendChild(strip); wrap.appendChild(stage);
+    wrap.appendChild(seg); wrap.appendChild(strip); wrap.appendChild(stage);
     function has(q) { return answers[q.key] != null && String(answers[q.key]).trim() !== ''; }
     function answered() { return qs.filter(has).length; }
     function img(q) { if (!imgs[q.key]) imgs[q.key] = q.img(); return imgs[q.key]; }
@@ -358,8 +376,10 @@
       strip.appendChild(h('button', { type: 'button', role: 'tab', class: 'check-tab' + (idx === qs.length ? ' cur' : ''), 'aria-selected': idx === qs.length ? 'true' : 'false', onclick: function () { go(qs.length); } }, '확인'));
     }
     function draw() {
-      drawStrip();
       stage.innerHTML = '';
+      strip.style.display = mode === 'sheet' ? 'none' : '';
+      if (mode === 'sheet') return drawSheet();
+      drawStrip();
       if (idx === qs.length) return drawReview();
       var q = qs[idx], pick = q.pick || 1;
       var typeLabel = q.type === 'mcq' ? '객관식' + (pick > 1 ? ' · ' + pick + '개 고르기' : '') : q.type === 'short' ? '단답형' : '서술형';
@@ -413,6 +433,79 @@
       var nq = qs[idx + 1];
       if (nq && nq.hasQ) img(nq); // 다음 문항 사진 미리 받아 두기
     }
+    function submitButton() {
+      var btn = h('button', { class: 'btn primary', type: 'button' }, cfg.submitLabel);
+      btn.addEventListener('click', async function () {
+        if (!(await UI.confirm(cfg.confirmMsg(qs.length - answered()), '내기'))) return;
+        UI.busy(btn, async function () {
+          await cfg.submit(answers, Object.keys(confused).filter(function (k) { return confused[k]; }));
+        }).catch(function () { });
+      });
+      return btn;
+    }
+    // 한 화면 빠른 입력: 번호마다 한 줄. 사진은 '문제' 버튼을 눌렀을 때만 불러옴
+    function drawSheet() {
+      var count = h('span', { class: 'small muted' });
+      function drawCount() { count.textContent = answered() + ' / ' + qs.length + ' 답함'; }
+      var rows = [];
+      var list = h('div', { class: 'card sheet' }, qs.map(function (q, i) {
+        var pick = q.pick || 1;
+        var row = h('div', { class: 'srow' + (has(q) ? ' done' : '') });
+        function mark() { row.classList.toggle('done', has(q)); drawCount(); }
+        function focusNext() { var nx = rows[i + 1]; if (nx && nx._focus) nx._focus(); }
+        var ctl;
+        if (q.type === 'mcq') {
+          var sel = String(answers[q.key] || '').split('').filter(Boolean).map(Number);
+          var btns = [1, 2, 3, 4, 5].map(function (n) {
+            return h('button', { type: 'button', class: sel.indexOf(n) !== -1 ? 'on' : '', 'aria-pressed': sel.indexOf(n) !== -1 ? 'true' : 'false', 'aria-label': q.label + ' ' + n, text: String(n), onclick: function () {
+              var k = sel.indexOf(n);
+              if (k !== -1) sel.splice(k, 1); else { if (sel.length >= pick) sel.shift(); sel.push(n); }
+              btns.forEach(function (b, j) { var on = sel.indexOf(j + 1) !== -1; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+              if (sel.length) answers[q.key] = sel.slice().sort().join(''); else delete answers[q.key];
+              mark();
+            } });
+          });
+          ctl = h('div', { class: 'pad mini', role: 'group', 'aria-label': q.label + ' 답' + (pick > 1 ? ' (' + pick + '개)' : '') }, btns);
+        } else if (q.type === 'short') {
+          ctl = h('input', { class: 'input sm', 'aria-label': q.label + ' 답', placeholder: '답', autocomplete: 'off', enterkeyhint: 'next', value: answers[q.key] || '',
+            oninput: function (e) { answers[q.key] = e.target.value; mark(); },
+            onkeydown: function (e) { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); focusNext(); } } });
+          row._focus = function () { ctl.focus(); };
+        } else {
+          ctl = h('textarea', { class: 'input sm', rows: 2, 'aria-label': q.label + ' 답', placeholder: '서술형 답', text: answers[q.key] || '',
+            oninput: function (e) { answers[q.key] = e.target.value; mark(); } });
+          row._focus = function () { ctl.focus(); };
+        }
+        var tools = h('div', { class: 'stools' });
+        var peek = null;
+        if (q.hasQ) {
+          var pb = h('button', { class: 'peek', type: 'button', 'aria-expanded': 'false' }, icon('image', 14), '문제');
+          pb.addEventListener('click', function () {
+            if (peek) { peek.remove(); peek = null; pb.setAttribute('aria-expanded', 'false'); pb.classList.remove('on'); return; }
+            peek = h('div', { class: 'qimg speek' }, h('div', { class: 'loading', style: 'padding:14px 0' }, h('div', { class: 'spin' })));
+            var box = peek;
+            img(q).then(function (url) { box.innerHTML = ''; if (url) box.appendChild(h('img', { src: url, alt: q.label + ' 문제' })); else box.appendChild(h('p', { class: 'small muted', style: 'padding:10px', text: '문제 사진이 없어요.' })); },
+              function () { delete imgs[q.key]; box.innerHTML = ''; box.appendChild(h('p', { class: 'small muted', style: 'padding:10px', text: '못 불러왔어요. 다시 눌러 보세요.' })); });
+            row.appendChild(peek); pb.setAttribute('aria-expanded', 'true'); pb.classList.add('on');
+          });
+          tools.appendChild(pb);
+        }
+        if (cfg.confused) {
+          var cb = h('button', { class: 'peek q' + (confused[q.key] ? ' on' : ''), type: 'button', 'aria-label': q.label + ' 헷갈려요', 'aria-pressed': confused[q.key] ? 'true' : 'false', text: '?', onclick: function () {
+            confused[q.key] = !confused[q.key]; cb.classList.toggle('on', confused[q.key]); cb.setAttribute('aria-pressed', confused[q.key] ? 'true' : 'false');
+          } });
+          tools.appendChild(cb);
+        }
+        row.appendChild(h('div', { class: 'sline' }, h('span', { class: 'sno', text: q.short }), ctl, tools));
+        if (q.sub) row.insertBefore(h('div', { class: 'tiny muted', style: 'padding-left:40px', text: q.sub }), row.firstChild);
+        rows.push(row);
+        return row;
+      }));
+      drawCount();
+      if (anyQ || cfg.confused) stage.appendChild(h('p', { class: 'tiny muted', text: (anyQ ? '문제 사진이 필요하면 번호 옆 "문제"를 눌러 펼쳐 봐요. ' : '') + (cfg.confused ? '"?"는 헷갈린 문제 표시예요.' : '') }));
+      stage.appendChild(list);
+      stage.appendChild(h('div', { class: 'submitbar' }, count, submitButton()));
+    }
     function drawReview() {
       var left = qs.length - answered();
       stage.appendChild(h('section', { class: 'card sec', style: 'gap:12px' },
@@ -422,13 +515,7 @@
           return h('button', { type: 'button', class: has(q) ? '' : 'miss', onclick: function () { go(i); } },
             h('span', { class: 'n', text: q.label + (confused[q.key] ? ' ?' : '') }), h('span', { class: 'a', text: a }));
         }))));
-      var btn = h('button', { class: 'btn primary', type: 'button' }, cfg.submitLabel);
-      btn.addEventListener('click', async function () {
-        if (!(await UI.confirm(cfg.confirmMsg(left), '내기'))) return;
-        UI.busy(btn, async function () {
-          await cfg.submit(answers, Object.keys(confused).filter(function (k) { return confused[k]; }));
-        }).catch(function () { });
-      });
+      var btn = submitButton();
       stage.appendChild(h('div', { class: 'submitbar' },
         h('button', { class: 'btn', type: 'button', onclick: function () { go(qs.length - 1); } }, icon('left', 16), '이전'),
         h('span', { class: 'small muted', text: answered() + ' / ' + qs.length + ' 답함' }), btn));
@@ -438,6 +525,7 @@
       var t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (document.querySelector('.dim')) return;
+      if (mode === 'sheet') return;
       var c = stage.querySelector('.q');
       if (/^[1-5]$/.test(e.key) && c && c._choose) { e.preventDefault(); c._choose(Number(e.key)); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); go(idx + 1); }
@@ -458,7 +546,7 @@
         it.essayScore != null && it.type === 'essay' ? h('span', null, '점수 ', h('b', { text: it.essayScore + ' / ' + it.points })) : null);
       var extra = h('div', { class: 'sec' });
       var btns = h('div', { class: 'btns' });
-      if (it.hasQ && ctx.src === 'hw') btns.appendChild(imgButton('문제 보기', function () { return call('student.questionImage', { id: ctx.id, no: it.no }); }, extra));
+      if (it.hasQ && ctx.src === 'hw') btns.appendChild(imgButton('문제 보기', function () { return call('student.questionImage', { id: ctx.id, no: it.no }); }, extra, it.result === 'X'));
       if (it.hasImage) btns.appendChild(imgButton('해설 그림 보기', function () {
         return ctx.src === 'test' ? call('student.testImage', { id: ctx.id, no: it.no }) : call('student.explanationImage', { id: ctx.id, no: it.no });
       }, extra));
@@ -473,17 +561,20 @@
     });
     return wrap;
   }
-  function imgButton(label, fetcher, target) {
+  // open: 처음부터 펼쳐 둠 (틀린 문제의 문제 사진). 화면에 보일 때 불러옴
+  function imgButton(label, fetcher, target, open) {
     var shown = null;
     var b = h('button', { class: 'btn small', type: 'button' }, icon('image', 16), label);
+    function setLabel() { b.lastChild.textContent = shown ? label.replace('보기', '접기') : label; }
+    if (open) { shown = qImage(fetcher); target.appendChild(shown); setTimeout(setLabel, 0); }
     b.addEventListener('click', function () {
-      if (shown) { shown.remove(); shown = null; return; }
+      if (shown) { shown.remove(); shown = null; setLabel(); return; }
       UI.busy(b, async function () {
         var url = await fetcher();
         if (!url) { UI.toast('그림이 없어요.'); return; }
         shown = h('div', { class: 'qimg' }, h('img', { src: url, alt: label }));
         target.appendChild(shown);
-      }).catch(function () { });
+      }).then(setLabel, function () { });
     });
     return b;
   }
@@ -497,6 +588,123 @@
   }
 
   // ===================== 자료실 =====================
+  // ===================== 영상 플레이어: 진도 기록 + 이름 워터마크 =====================
+  var YT_READY = null;
+  function loadYT() {
+    if (window.YT && window.YT.Player) return Promise.resolve();
+    if (YT_READY) return YT_READY;
+    YT_READY = new Promise(function (res, rej) {
+      var prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = function () { if (prev) try { prev(); } catch (e) { } res(); };
+      var sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; sc.async = true;
+      sc.onerror = function () { YT_READY = null; rej(new Error('yt')); };
+      document.head.appendChild(sc);
+      setTimeout(function () { rej(new Error('yt-timeout')); }, 15000);
+    });
+    return YT_READY;
+  }
+  function mmss(t) { t = Math.max(0, Math.round(t)); var hh = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60; return (hh ? hh + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + s).slice(-2); }
+  var STEP = 5;
+  function hexToCells(hex) { var c = []; String(hex || '').split('').forEach(function (ch) { var v = parseInt(ch, 16) || 0; for (var b = 0; b < 4; b++) c.push(v & (8 >> b) ? 1 : 0); }); return c; }
+  function cellsToHex(c) { var out = ''; for (var i = 0; i < c.length; i += 4) out += (((c[i] ? 8 : 0) | (c[i + 1] ? 4 : 0) | (c[i + 2] ? 2 : 0) | (c[i + 3] ? 1 : 0))).toString(16); return out; }
+  function videoPlayer(u, v, wm, onPct, box) {
+    var timers = [], closed = false;
+    var frame = h('div', { class: 'frame wmframe' });
+    var host = h('div', { class: 'ythost' });
+    frame.appendChild(host);
+    // 워터마크: 이름 · 학교, 18초마다 자리 옮김
+    var mark = h('div', { class: 'wm', 'aria-hidden': 'true', text: wm || '' });
+    frame.appendChild(mark);
+    function moveMark() {
+      mark.style.opacity = '0';
+      setTimeout(function () { mark.style.left = (12 + Math.random() * 64) + '%'; mark.style.top = (12 + Math.random() * 62) + '%'; mark.style.opacity = ''; }, 600);
+    }
+    if (wm) { mark.style.left = '50%'; mark.style.top = '30%'; timers.push(setInterval(moveMark, 18000)); }
+    var exitBtn = h('button', { class: 'fs-exit', type: 'button', 'aria-label': '전체 화면 닫기' }, '닫기');
+    frame.appendChild(exitBtn);
+    var status = h('span', { class: 'tiny muted', style: 'flex:1' });
+    var fsBtn = h('button', { class: 'btn small', type: 'button' }, '전체 화면');
+    var el = h('div', null, frame, h('div', { class: 'inline', style: 'margin-top:6px;gap:8px' }, status, fsBtn));
+    function isFs() { return document.fullscreenElement === frame || document.webkitFullscreenElement === frame || frame.classList.contains('pseudo-fs'); }
+    function enterFs() {
+      var rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
+      if (rq) { try { var r = rq.call(frame); if (r && r.catch) r.catch(function () { frame.classList.add('pseudo-fs'); }); return; } catch (e) { } }
+      frame.classList.add('pseudo-fs'); document.body.classList.add('noscroll');
+    }
+    function exitFs() {
+      if (frame.classList.contains('pseudo-fs')) { frame.classList.remove('pseudo-fs'); document.body.classList.remove('noscroll'); return; }
+      var ex = document.exitFullscreen || document.webkitExitFullscreen; if (ex) try { ex.call(document); } catch (e) { }
+    }
+    fsBtn.addEventListener('click', function () { isFs() ? exitFs() : enterFs(); });
+    exitBtn.addEventListener('click', exitFs);
+    if (box) box._busy = (box._busy || 0) + 1;
+
+    var api = { el: el, close: close };
+    window.addEventListener('hashchange', function once() { window.removeEventListener('hashchange', once); close(); });
+    if (v.kind !== 'youtube' || !v.yt) {
+      host.appendChild(h('iframe', { src: v.embed, title: u.title + ' ' + (v.label || '영상'), allow: 'autoplay; encrypted-media; picture-in-picture' }));
+      status.textContent = '이 영상은 시청 진도가 기록되지 않아요.';
+      return api;
+    }
+    // 유튜브: 실제로 재생된 5초 칸만 채움
+    var w = v.watch || {}, cells = hexToCells(w.bits), dur = w.dur || 0, sent = 0, playSec = 0, lastT = null, dirty = false, yp = null;
+    var resume = w.pos && w.pct < 95 && (!dur || w.pos < dur - 10) ? Math.floor(w.pos) : 0;
+    function pctNow() { var n = Math.max(1, Math.ceil(dur / STEP)), on = 0; for (var i = 0; i < n; i++) if (cells[i]) on++; return Math.min(100, Math.round(on / n * 100)); }
+    function drawStatus() { if (dur) status.textContent = '시청 ' + pctNow() + '% · ' + mmss(dur) + ' 영상' + (resume ? ' · ' + mmss(resume) + '부터 이어 봐요' : ''); }
+    function flush(final) {
+      if (!dirty || !dur || !yp) return;
+      var pos = 0; try { pos = yp.getCurrentTime(); } catch (e) { }
+      var data = { unitId: u.id, videoId: v.id, dur: dur, bits: cellsToHex(cells), pos: pos, sec: playSec - sent };
+      sent = playSec; dirty = false;
+      if (final) { API.beacon('student.watch', data, ROLE); onPct(pctNow()); return; }
+      call('student.watch', data).then(function (r) { if (r && r.pct != null) onPct(r.pct); }, function () { dirty = true; });
+    }
+    function tick() {
+      if (!yp || !yp.getPlayerState || yp.getPlayerState() !== 1) { lastT = null; return; }
+      var t = 0; try { t = yp.getCurrentTime(); } catch (e) { return; }
+      if (!dur) { try { dur = yp.getDuration() || 0; } catch (e) { } }
+      if (lastT != null && t >= lastT && t - lastT <= 3) { for (var x = Math.floor(lastT / STEP); x <= Math.floor(t / STEP); x++) cells[x] = 1; }
+      else cells[Math.floor(t / STEP)] = 1;
+      lastT = t; playSec++; dirty = true;
+      drawStatus();
+    }
+    function onHide() { if (document.visibilityState === 'hidden') flush(true); }
+    function onPageHide() { flush(true); }
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onPageHide);
+    status.textContent = '영상 불러오는 중…';
+    loadYT().then(function () {
+      if (closed) return;
+      var pv = { rel: 0, modestbranding: 1, playsinline: 1, fs: 0 };
+      if (resume) pv.start = resume;
+      yp = new YT.Player(host, {
+        videoId: v.yt, width: '100%', height: '100%', playerVars: pv,
+        events: {
+          onReady: function () { try { dur = yp.getDuration() || dur; } catch (e) { } drawStatus(); },
+          onStateChange: function (e) { if (e.data === 1) { try { dur = yp.getDuration() || dur; } catch (x) { } } if (e.data === 2 || e.data === 0) flush(false); if (e.data === 0) resume = 0; },
+          onError: function () { status.textContent = '영상을 재생할 수 없어요. 선생님께 말해 주세요.'; }
+        }
+      });
+      timers.push(setInterval(tick, 1000));
+      timers.push(setInterval(function () { flush(false); }, 30000));
+    }, function () {
+      if (closed) return;
+      host.appendChild(h('iframe', { src: v.embed + '&fs=0&playsinline=1', title: u.title + ' ' + (v.label || '영상'), allow: 'autoplay; encrypted-media; picture-in-picture' }));
+      status.textContent = '진도 기록 없이 재생 중이에요.';
+    });
+    function close() {
+      if (closed) return; closed = true;
+      flush(true);
+      timers.forEach(clearInterval);
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onPageHide);
+      if (isFs()) exitFs();
+      try { if (yp && yp.destroy) yp.destroy(); } catch (e) { }
+      el.remove();
+      if (box) box._busy = Math.max(0, (box._busy || 1) - 1);
+    }
+    return api;
+  }
   function viewUnits() {
     var box = h('div', { class: 'sec', style: 'gap:16px' });
     page('units', box);
@@ -509,24 +717,26 @@
         inner.appendChild(h('div', { class: 'card empty', text: d.closed ? '종강하고 1주가 지나서 영상·자료가 닫혔어요.' : d.upcoming ? '아직 열린 수업이 없어요. 날짜가 되면 여기에 열려요.' : '지금 볼 수 있는 영상·자료가 없어요. 선생님이 열어 준 영상·자료가 여기에 보여요.' }));
         return;
       }
-      d.list.forEach(function (u) { inner.appendChild(unitCard(u)); });
+      d.list.forEach(function (u) { inner.appendChild(unitCard(u, d.wm || (S.who ? S.who[1] : ''), inner)); });
       if (d.upcoming) inner.appendChild(h('p', { class: 'small muted', style: 'grid-column:1/-1', text: '다음 수업 ' + d.upcoming + '개는 날짜가 되면 열려요.' }));
     });
   }
-  function unitCard(u) {
+  function unitCard(u, wm, box) {
     var card = h('section', { class: 'card unit' },
       h('div', null, h('h2', { text: u.title }), h('p', { class: 'small muted', text: UI.fmtDate(u.from) + '부터' + (u.to ? ' ' + UI.fmtDate(u.to) + '까지' : '') })),
       u.memo ? h('p', { class: 'small', style: 'white-space:pre-wrap', text: u.memo }) : null);
     u.videos.forEach(function (v) {
-      var frame = null;
-      var vb = h('button', { class: 'vid-btn', type: 'button', 'aria-expanded': 'false' }, icon('play', 20), h('span', { style: 'flex:1', text: v.label || '영상' }), h('span', { class: 'tiny', text: '보기' }));
+      var player = null;
+      var pctEl = h('span', { class: 'tiny' });
+      function showPct(p) { pctEl.textContent = p == null ? '보기' : p >= 90 ? '다 봤어요 ' + p + '%' : '시청 ' + p + '%'; pctEl.classList.toggle('done', p != null && p >= 90); }
+      showPct(v.watch ? v.watch.pct : null);
+      var vb = h('button', { class: 'vid-btn', type: 'button', 'aria-expanded': 'false' }, icon('play', 20), h('span', { style: 'flex:1', text: v.label || '영상' }), pctEl);
       var holder = h('div', { class: 'vid' }, vb);
       vb.addEventListener('click', function () {
-        if (frame) { frame.remove(); frame = null; vb.setAttribute('aria-expanded', 'false'); return; }
+        if (player) { player.close(); player = null; vb.setAttribute('aria-expanded', 'false'); return; }
         call('student.viewVideo', { unitId: u.id, videoId: v.id }).catch(function () { });
-        frame = h('div', null, h('div', { class: 'frame' }, h('iframe', { src: v.embed, title: u.title + ' ' + (v.label || '영상'), allow: 'autoplay; encrypted-media; fullscreen; picture-in-picture', allowfullscreen: true })),
-          h('a', { href: v.open, target: '_blank', rel: 'noopener', class: 'small', style: 'display:inline-block;margin-top:6px', text: '새 창에서 보기' }));
-        holder.appendChild(frame);
+        player = videoPlayer(u, v, wm, showPct, box);
+        holder.appendChild(player.el);
         vb.setAttribute('aria-expanded', 'true');
       });
       card.appendChild(holder);
@@ -782,6 +992,7 @@
             type: x.type, pick: x.pick || 1, hasQ: x.hasQ, img: function () { return call('student.questionImage', { id: x.id, no: x.no }); } };
         }),
         confused: false,
+        forceShow: true,
         submitLabel: '채점하기',
         confirmMsg: function (left) { return left ? '안 푼 문항이 ' + left + '개 있어요. 그래도 채점할까요?' : '채점할까요?'; },
         submit: async function (answers) {
@@ -825,7 +1036,7 @@
       box.appendChild(h('section', { class: 'card tint ' + (late ? 'butter' : 'mint'), style: 'padding:28px 20px;text-align:center' },
         h('div', { style: 'font-size:44px;line-height:1', text: late ? '⏰' : '✓' }),
         h('div', { class: 'big', style: 'margin-top:10px', text: r.already ? '이미 ' + r.label + '했어요' : r.label + ' 완료!' }),
-        h('p', { class: 'small', style: 'margin-top:4px', text: UI.fmtDate(r.date) + (late ? ' · 수업 시작 시각이 지나서 지각으로 기록됐어요' : '') })));
+        h('p', { class: 'small', style: 'margin-top:4px', text: UI.fmtDate(r.date) + (late ? ' · 지각 기준 시각이 지나서 지각으로 기록됐어요' : '') })));
       box.appendChild(h('a', { class: 'btn primary', href: '#/' }, '홈으로'));
     });
   }
